@@ -6,6 +6,8 @@
 			body {
 				font: 14px/18px sans-serif;
 				--highlight: rgba(255,204,0,0.4);
+				margin: 0;
+				padding: 0.5em;
 			}
 
 			select {
@@ -16,12 +18,22 @@
 				display: flex;
 			}
 
-			#navigator > *,
-			#document > * {
+			#navigator {
+				height: 30vh;
+				overflow: hidden;
+				resize: vertical;
+				padding-bottom: 0.5em;
+				border-bottom: 1px solid #ccc;
+			}
+
+			#navigator > select {
 				flex: 1 1 0;
+				height: 100%;
+				border: 1px solid #ccc;
 			}
 
 			#document > * {
+				flex: 1 1 0;
 				padding: 1em;
 			}
 
@@ -46,7 +58,7 @@
 	</head>
 	<body>
 		<div id="navigator">
-			<select id="file-list" size=10></select>
+			<select id="file-list" size=10 resize></select>
 			<select id="document-list" size=10></select>
 		</div>
 		<div id="document">

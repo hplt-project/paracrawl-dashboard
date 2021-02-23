@@ -54,6 +54,14 @@ def get_document(filename, index):
 		}
 
 
+def human_filesize(size):
+	for suffix in ['B', 'K', 'M', 'G', 'T']:
+		if size < 1000:
+			return '{:.1f}{}'.format(size, suffix)
+		else:
+			size /= 1000
+
+
 app = Application()
 
 
@@ -66,9 +74,9 @@ def index(request):
 def list_files(request):
 	return send_json([
 		{
-			'name': filename,
+			'name': '{} ({})'.format(filename, human_filesize(os.path.getsize(filename))),
 			'link': app.url_for('list_documents', filename=filename, index=1)
-		} for filename in glob('*-bleualign-input.tab.gz')
+		} for filename in sorted(glob('*-bleualign-input.tab.gz'))
 	])
 
 
@@ -76,7 +84,7 @@ def list_files(request):
 def list_documents(request, filename):
 	return send_json([
 		{
-			'name': 'Document {} ({})'.format(n, offset),
+			'name': 'Document {} (at {})'.format(n, human_filesize(offset)),
 			'link': app.url_for('show_document', filename=filename, index=n)
 		} for n, offset in enumerate(get_document_index(filename))
 	])
