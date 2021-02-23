@@ -13,7 +13,7 @@ def index_document(filename):
 	with gzip.open(filename, 'rb') as fh:
 		read_offset = 0
 		while True:
-			chunk = fh.read(8192)
+			chunk = fh.read(32768)
 			if len(chunk) == 0:
 				break
 			pos = 0
