@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Bleualign input explorer</title>
+		<style>
+			body {
+				font: 14px/18px sans-serif;
+				--highlight: rgba(255,204,0,0.4);
+			}
+
+			select {
+				font: inherit;
+			}
+
+			#navigator, #document {
+				display: flex;
+			}
+
+			#navigator > *,
+			#document > * {
+				flex: 1 1 0;
+			}
+
+			#document > * {
+				padding: 1em;
+			}
+
+			*[data-label]::before {
+				content: attr(data-label);
+				color: #ccc;
+				display: block;
+				text-align: center;
+			}
+
+			.sentence {
+				display: block;
+				margin-bottom: .5em;
+			}
+
+			.sentence::before {
+				content: attr(data-index);
+				color: #ccc;
+				padding-right: 1ch;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="navigator">
+			<select id="file-list" size=10></select>
+			<select id="document-list" size=10></select>
+		</div>
+		<div id="document">
+			<div data-property="text_src" data-label="Foreign text"></div>
+			<div data-property="text_trg" data-label="English text"></div>
+			<div data-property="align_src" data-label="Foreign text translated to English"></div>
+		</div>
+		<script>
+			document.querySelector('#file-list').addEventListener('input', e => {
+				fetchDocumentList(e.target.options[e.target.selectedIndex].dataset.link);
+			});
+
+			document.querySelector('#document-list').addEventListener('input', e => {
+				highlight();
+				fetchDocument(e.target.options[e.target.selectedIndex].dataset.link);
+			});
+
+			let cssRule = -1;
+
+			document.querySelector('#document').addEventListener('click', e => {
+				if (e.target.matches('.sentence'))
+					highlight(e.target.dataset.index);
+			});
+
+			function highlight(index) {
+				const sheet = document.querySelector('style').sheet;
+				if (cssRule != -1) {
+					sheet.removeRule(cssRule);
+					cssRule = -1;
+				}
+
+				if (index !== undefined)
+					cssRule = sheet.insertRule(`.sentence[data-index='${index}'] {
+						background-color: var(--highlight);
+					}`);
+			}
+
+			async function populate(selector, url, callback) {
+				const select = document.querySelector(selector);
+				select.disabled = true;
+				while (select.options.length > 0)
+					select.options.remove(0);
+				const response = await fetch(url);
+				const items = await response.json();
+				items.forEach(item => select.options.add(callback(item)));
+				select.disabled = false;
+			}
+
+			async function fetchFileList() {
+				populate('#file-list', '/files/', file => {
+					const option = new Option(file.name)
+					option.dataset.link = file.link;
+					return option;
+				});
+			}
+
+			async function fetchDocumentList(link) {
+				populate('#document-list', link, document => {
+					const option = new Option(document.name)
+					option.dataset.link = document.link;
+					return option;
+				});
+			} 
+
+			async function fetchDocument(link) {
+				const container = document.querySelector('#document');
+				
+				// Clear (to show something is happening)
+				Array.from(container.querySelectorAll('[data-property]')).forEach(component => {
+					while (component.firstChild)
+						component.removeChild(component.firstChild);
+				});
+
+				// Download
+				const response = await fetch(link);
+				const doc = await response.json();
+				
+				// Populate
+				Array.from(container.querySelectorAll('[data-property]')).forEach(component => {
+					doc[component.dataset.property].split('\n').forEach((line, n) => {
+						const span = document.createElement('span');
+						span.classList.add('sentence');
+						span.textContent = line;
+						span.dataset.index = n;
+						component.appendChild(span);
+					})
+				});
+			}
+
+			fetchFileList();
+		</script>
+	</body>
+</html>
