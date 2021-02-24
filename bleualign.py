@@ -84,7 +84,7 @@ def get_aligned_sentences(filename, offsets):
 	with gzip.open(aligned_filename, 'rb') as fh:
 		for offset in offsets:
 			fh.seek(offset)
-			yield tuple(col.decode() for col in fh.readline().split(b'\t', maxsplit=4))
+			yield tuple(col.decode().lstrip() for col in fh.readline().rstrip(b'\n').split(b'\t', maxsplit=4))
 
 
 aligned_indexes = lazydict(index_aligned_document)
