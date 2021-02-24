@@ -6,12 +6,24 @@
 			body {
 				font: 14px/18px sans-serif;
 				--highlight: rgba(255,204,0,0.4);
-				margin: 0;
+				margin: 0 0 1em 0;
 				padding: 0.5em;
 			}
 
 			select {
 				font: inherit;
+			}
+
+			#controls {
+				position: fixed;
+				display: flex;
+				bottom: 0;
+				background: white;
+				left: 0;
+				right: 0;
+				padding: 0.25em 1em;
+				border-top: 1px solid #ccc;
+				justify-content: flex-end;
 			}
 
 			#navigator, #document {
@@ -34,7 +46,7 @@
 
 			#document > * {
 				flex: 1 1 0;
-				padding: 1em;
+				margin: 1em;
 			}
 
 			*[data-label]::before {
@@ -47,6 +59,7 @@
 			.sentence {
 				display: block;
 				margin-bottom: .5em;
+				background-color: rgba(var(--alignment-color), var(--alignment-opacity));
 			}
 
 			.sentence::before {
@@ -54,9 +67,14 @@
 				color: #ccc;
 				padding-right: 1ch;
 			}
+
+
 		</style>
 	</head>
 	<body>
+		<div id="controls">
+			<input type="range" min=0 max=100 id="alignment-opacity" value=40 title="Alignment colour opacity">
+		</div>
 		<div id="navigator">
 			<select id="file-list" size=10 resize></select>
 			<select id="document-list" size=10></select>
@@ -65,23 +83,58 @@
 			<div data-property="text_src" data-label="Foreign text"></div>
 			<div data-property="align_src" data-label="Foreign text translated to English"></div>
 			<div data-property="text_trg" data-label="English text"></div>
+			<div data-property="aligned_src" data-label="Aligned Foreign text"></div>
+			<div data-property="aligned_trg" data-label="Aligned English text"></div>
 		</div>
 		<script>
-			document.querySelector('#file-list').addEventListener('input', e => {
-				fetchDocumentList(e.target.options[e.target.selectedIndex].dataset.link);
-			});
+			const colours = [
+						'230, 25, 75',
+						' 60,180, 75',
+						'255,225, 25',
+						'  0,130,200',
+						'245,130, 48',
+						'145, 30,180',
+						' 70,240,240',
+						'240, 50,230',
+						'210,245, 60',
+						'250,190,190',
+						'  0,128,128',
+						'230,190,255',
+						'170,110, 40',
+						'255,250,200',
+						'128,  0,  0',
+						'170,255,195',
+						'128,128,  0',
+						'255,215,180',
+						'  0,  0,128',
+						'128,128,128',
+						'255,255,255',
+						'  0,  0,  0',
+					];
 
-			document.querySelector('#document-list').addEventListener('input', e => {
-				highlight();
-				fetchDocument(e.target.options[e.target.selectedIndex].dataset.link);
-			});
+			function connect(selector, callback) {
+				const el = document.querySelector('#alignment-opacity');
+				const key = `${selector}::value`;
+
+				// Restore stored value
+				if (key in window.localStorage)
+					el.value = JSON.parse(window.localStorage[key]);
+
+				// Listen for updates
+				el.addEventListener('input', e => {
+					window.localStorage[key] = JSON.stringify(el.value);
+					callback(el.value);
+				});
+
+				// Call once to initialize
+				callback(el.value);
+			}
+
+			Array.prototype.last = function() {
+				return this.length > 0 ? this[this.length - 1] : undefined;
+			}
 
 			let cssRule = -1;
-
-			document.querySelector('#document').addEventListener('click', e => {
-				if (e.target.matches('.sentence'))
-					highlight(e.target.dataset.index);
-			});
 
 			function highlight(index) {
 				const sheet = document.querySelector('style').sheet;
@@ -92,7 +145,7 @@
 
 				if (index !== undefined)
 					cssRule = sheet.insertRule(`.sentence[data-index='${index}'] {
-						background-color: var(--highlight);
+						outline: 2px solid black;
 					}`);
 			}
 
@@ -138,7 +191,7 @@
 				
 				// Populate
 				Array.from(container.querySelectorAll('[data-property]')).forEach(component => {
-					doc[component.dataset.property].split('\n').forEach((line, n) => {
+					doc[component.dataset.property].forEach((line, n) => {
 						const span = document.createElement('span');
 						span.classList.add('sentence');
 						span.textContent = line;
@@ -146,7 +199,72 @@
 						component.appendChild(span);
 					})
 				});
+
+				// Mark matches
+				[['aligned_src', 'text_src'], ['aligned_trg', 'text_trg']].forEach(([aligned_prop, text_prop]) => {
+					const alignment_src = doc[aligned_prop].reduce((alignment, sentence, i) => {
+						let search = doc[text_prop];
+
+						for (offset = alignment.length > 0 ? alignment.last().src.last() : 0; offset < search.length; ++offset) {
+							// If this sentence is longer than the one we're looking for, it is definitely a miss.
+							if (search[offset].length > sentence.length)
+								continue;
+
+							// If this sentence starts differently, it's a miss
+							if (search[offset] != sentence.substr(0, search[offset].length))
+								continue;
+
+							// Now let's see how many sentences we need to glue to get the sentence we're looking for
+							for (len = 1; len < search.length - offset; ++len) {
+								const text = search.slice(offset, offset + len).join(' ');
+								
+								// If we matched it, good! We're done searching for this sentence
+								if (text == sentence)
+									return alignment.concat([{src: [offset, offset + len], trg: [i, i + 1]}]);
+
+								// If we joined a text longer than sentence, stop trying to glue
+								// and try the next beginning sentence.
+								if (text.length > sentence)
+									break;
+							}
+						}
+
+						// In case we didn't find anything for this sentence
+						return alignment;
+					}, []);
+
+					console.log(alignment_src);
+
+					/// Colour them ranges
+					alignment_src.forEach((range, i) => {
+						Array.from(container.querySelectorAll(`[data-property="${text_prop}"] > .sentence`)).slice(...range.src).forEach(span => {
+							span.style.setProperty('--alignment-color', colours[i % 20]);
+						});
+
+						Array.from(container.querySelectorAll(`[data-property="${aligned_prop}"] > .sentence`)).slice(...range.trg).forEach(span => {
+							span.style.setProperty('--alignment-color', colours[i % 20]);
+						});
+					});
+				});
 			}
+
+			document.querySelector('#file-list').addEventListener('input', e => {
+				fetchDocumentList(e.target.options[e.target.selectedIndex].dataset.link);
+			});
+
+			document.querySelector('#document-list').addEventListener('input', e => {
+				highlight();
+				fetchDocument(e.target.options[e.target.selectedIndex].dataset.link);
+			});
+
+			document.querySelector('#document').addEventListener('click', e => {
+				if (e.target.matches('.sentence'))
+					highlight(e.target.dataset.index);
+			});
+
+			connect('#alignment-opacity', value => {
+				document.body.style.setProperty('--alignment-opacity', parseInt(value) / 100);
+			});
 
 			fetchFileList();
 		</script>
