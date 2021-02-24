@@ -29,9 +29,14 @@
 				flex:  0 0 auto;
 				display: flex;
 				background: white;
-				padding: 0.25em 1em;
+				padding: 0 .5em;
+				line-height: 2em;
 				border-top: 1px solid #ccc;
 				justify-content: flex-end;
+			}
+
+			#controls > * {
+				margin: 0 .5em;
 			}
 
 			#navigator, #document {
@@ -106,6 +111,7 @@
 			<div class="col" data-property="aligned_trg" data-label="Aligned English text"></div>
 		</div>
 		<div id="controls">
+			<label><input type="checkbox" id="sync-scrolling" checked> Sync scrolling</label>
 			<input type="range" min=0 max=100 id="alignment-opacity" value=40 title="Alignment colour opacity">
 		</div>
 		<script>
@@ -135,21 +141,22 @@
 					];
 
 			function connect(selector, callback) {
-				const el = document.querySelector('#alignment-opacity');
+				const el = document.querySelector(selector);
 				const key = `${selector}::value`;
+				const prop = el.type == 'checkbox' ? 'checked' : 'value';
 
 				// Restore stored value
 				if (key in window.localStorage)
-					el.value = JSON.parse(window.localStorage[key]);
+					el[prop] = JSON.parse(window.localStorage[key]);
 
 				// Listen for updates
 				el.addEventListener('input', e => {
-					window.localStorage[key] = JSON.stringify(el.value);
-					callback(el.value);
+					window.localStorage[key] = JSON.stringify(el[prop]);
+					callback(el[prop]);
 				});
 
 				// Call once to initialize
-				callback(el.value);
+				callback(el[prop]);
 			}
 
 			Array.prototype.last = function() {
@@ -289,6 +296,11 @@
 
 			const columns = document.querySelectorAll('.col');
 			let currentCol = null;
+			let syncScrolling = true;
+
+			connect('#sync-scrolling', value => {
+				syncScrolling = value;
+			});
 
 			columns.forEach(col => {
 				col.addEventListener('mouseenter', e => {
@@ -298,6 +310,9 @@
 
 			columns.forEach(col => {
 				col.addEventListener('scroll', e => {
+					if (!syncScrolling)
+						return;
+
 					if (col === currentCol) {
 						const frac = col.scrollTop / (col.scrollHeight - col.offsetHeight);
 						columns.forEach(col => {
