@@ -3,11 +3,22 @@
 	<head>
 		<title>Bleualign input explorer</title>
 		<style>
+			html {
+				margin: 0;
+				padding: 0;
+				height: 100%;
+			}
+
 			body {
 				font: 14px/18px sans-serif;
 				--highlight: rgba(255,204,0,0.4);
-				margin: 0 0 1em 0;
-				padding: 0.5em;
+				box-sizing: border-box;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+				display: flex;
+				flex-direction: column;
+				justify-content: stretch;
 			}
 
 			select {
@@ -15,12 +26,9 @@
 			}
 
 			#controls {
-				position: fixed;
+				flex:  0 0 auto;
 				display: flex;
-				bottom: 0;
 				background: white;
-				left: 0;
-				right: 0;
 				padding: 0.25em 1em;
 				border-top: 1px solid #ccc;
 				justify-content: flex-end;
@@ -31,10 +39,11 @@
 			}
 
 			#navigator {
-				height: 30vh;
+				flex: 0 0 auto;
+				height: 20vh;
 				overflow: hidden;
 				resize: vertical;
-				padding-bottom: 0.5em;
+				padding: 0.5em;
 				border-bottom: 1px solid #ccc;
 			}
 
@@ -44,9 +53,20 @@
 				border: 1px solid #ccc;
 			}
 
-			#document > * {
+			#document {
+				flex: 1 1 auto;
+				overflow: hidden;
+			}
+
+			#document .col {
 				flex: 1 1 0;
-				margin: 1em;
+				padding: 1em;
+				overflow-y: auto;
+			}
+
+			#document .separator {
+				flex:  0 0 1px;
+				background: #ccc;
 			}
 
 			*[data-label]::before {
@@ -58,7 +78,8 @@
 
 			.sentence {
 				display: block;
-				margin-bottom: .5em;
+				margin: .25em 0;
+				padding: .25em;
 				background-color: rgba(var(--alignment-color), var(--alignment-opacity));
 			}
 
@@ -72,19 +93,20 @@
 		</style>
 	</head>
 	<body>
-		<div id="controls">
-			<input type="range" min=0 max=100 id="alignment-opacity" value=40 title="Alignment colour opacity">
-		</div>
 		<div id="navigator">
 			<select id="file-list" size=10 resize></select>
 			<select id="document-list" size=10></select>
 		</div>
 		<div id="document">
-			<div data-property="text_src" data-label="Foreign text"></div>
-			<div data-property="align_src" data-label="Foreign text translated to English"></div>
-			<div data-property="text_trg" data-label="English text"></div>
-			<div data-property="aligned_src" data-label="Aligned Foreign text"></div>
-			<div data-property="aligned_trg" data-label="Aligned English text"></div>
+			<div class="col" data-property="text_src" data-label="Foreign text"></div>
+			<div class="col" data-property="align_src" data-label="Foreign text translated to English"></div>
+			<div class="col" data-property="text_trg" data-label="English text"></div>
+			<div class="separator"></div>
+			<div class="col" data-property="aligned_src" data-label="Aligned Foreign text"></div>
+			<div class="col" data-property="aligned_trg" data-label="Aligned English text"></div>
+		</div>
+		<div id="controls">
+			<input type="range" min=0 max=100 id="alignment-opacity" value=40 title="Alignment colour opacity">
 		</div>
 		<script>
 			const colours = [
@@ -206,6 +228,9 @@
 						let search = doc[text_prop];
 
 						for (offset = alignment.length > 0 ? alignment.last().src.last() : 0; offset < search.length; ++offset) {
+							if (offset == 0 && i == 0)
+								console.log([search[offset], sentence]);
+
 							// If this sentence is longer than the one we're looking for, it is definitely a miss.
 							if (search[offset].length > sentence.length)
 								continue;
@@ -247,6 +272,27 @@
 					});
 				});
 			}
+
+			const columns = document.querySelectorAll('.col');
+			let currentCol = null;
+
+			columns.forEach(col => {
+				col.addEventListener('mouseenter', e => {
+					currentCol = col;
+				})
+			});
+
+			columns.forEach(col => {
+				col.addEventListener('scroll', e => {
+					if (col === currentCol) {
+						const frac = col.scrollTop / (col.scrollHeight - col.offsetHeight);
+						columns.forEach(col => {
+							if (col !== currentCol)
+								col.scrollTop = frac * (col.scrollHeight - col.offsetHeight);
+						});
+					}
+				}, {passive: true})
+			});
 
 			document.querySelector('#file-list').addEventListener('input', e => {
 				fetchDocumentList(e.target.options[e.target.selectedIndex].dataset.link);
