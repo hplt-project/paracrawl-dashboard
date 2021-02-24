@@ -223,8 +223,21 @@
 				});
 
 				// Mark matches
-				[['aligned_src', 'text_src'], ['aligned_trg', 'text_trg']].forEach(([aligned_prop, text_prop]) => {
-					const alignment_src = doc[aligned_prop].reduce((alignment, sentence, i) => {
+				// [
+				// 	prop of aligned, cols of aligned data,
+				// 	prop of text it matched against, cols of these texts
+				// ]
+				[
+					[
+						'aligned_src', ['aligned_src'],
+						'text_src', ['text_src', 'align_src']
+					],
+					[
+						'aligned_trg', ['aligned_trg'],
+						'text_trg', ['text_trg']
+					]
+				].forEach(([aligned_prop, aligned_cols, text_prop, text_cols]) => {
+					const alignments = doc[aligned_prop].reduce((alignment, sentence, i) => {
 						let search = doc[text_prop];
 
 						for (offset = alignment.length > 0 ? alignment.last().src.last() : 0; offset < search.length; ++offset) {
@@ -240,7 +253,7 @@
 								continue;
 
 							// Now let's see how many sentences we need to glue to get the sentence we're looking for
-							for (len = 1; len < search.length - offset; ++len) {
+							for (len = 1; len <= search.length - offset; ++len) {
 								const text = search.slice(offset, offset + len).join(' ');
 								
 								// If we matched it, good! We're done searching for this sentence
@@ -258,16 +271,20 @@
 						return alignment;
 					}, []);
 
-					console.log(alignment_src);
+					console.log(alignments);
 
-					/// Colour them ranges
-					alignment_src.forEach((range, i) => {
-						Array.from(container.querySelectorAll(`[data-property="${text_prop}"] > .sentence`)).slice(...range.src).forEach(span => {
-							span.style.setProperty('--alignment-color', colours[i % 20]);
+					// Colour them ranges
+					alignments.forEach((range, i) => {
+						aligned_cols.forEach(col => {
+							Array.from(container.querySelectorAll(`[data-property="${col}"] > .sentence`)).slice(...range.trg).forEach(span => {
+								span.style.setProperty('--alignment-color', colours[i % 20]);
+							});
 						});
 
-						Array.from(container.querySelectorAll(`[data-property="${aligned_prop}"] > .sentence`)).slice(...range.trg).forEach(span => {
-							span.style.setProperty('--alignment-color', colours[i % 20]);
+						text_cols.forEach(col => {
+							Array.from(container.querySelectorAll(`[data-property="${col}"] > .sentence`)).slice(...range.src).forEach(span => {
+								span.style.setProperty('--alignment-color', colours[i % 20]);
+							});
 						});
 					});
 				});
