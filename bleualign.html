@@ -129,8 +129,9 @@
 		</div>
 		<div id="document">
 			<div class="col" data-property="text_src" data-label="Foreign text"></div>
-			<div class="col" data-property="align_src" data-label="Foreign text translated to English"></div>
 			<div class="col" data-property="text_trg" data-label="English text"></div>
+			<div class="col" data-property="align_src" data-label="Foreign text translated to English"></div>
+			<div class="col" data-property="align_trg" data-label="English text preprocessed"></div>
 			<div class="separator"></div>
 			<div class="col" data-property="aligned_src" data-label="Aligned Foreign text"></div>
 			<div class="col" data-property="aligned_trg" data-label="Aligned English text"></div>
@@ -277,7 +278,7 @@
 					],
 					[
 						'aligned_trg', ['aligned_trg'],
-						'text_trg', ['text_trg']
+						'text_trg', ['text_trg', 'align_trg']
 					]
 				].forEach(([aligned_prop, aligned_cols, text_prop, text_cols]) => {
 					const alignments = doc[aligned_prop].reduce((alignment, sentence, i) => {
