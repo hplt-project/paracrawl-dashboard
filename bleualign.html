@@ -241,9 +241,6 @@
 						let search = doc[text_prop];
 
 						for (offset = alignment.length > 0 ? alignment.last().src.last() : 0; offset < search.length; ++offset) {
-							if (offset == 0 && i == 0)
-								console.log([search[offset], sentence]);
-
 							// If this sentence is longer than the one we're looking for, it is definitely a miss.
 							if (search[offset].length > sentence.length)
 								continue;
@@ -271,7 +268,7 @@
 						return alignment;
 					}, []);
 
-					console.log(alignments);
+					// console.log(alignments);
 
 					// Colour them ranges
 					alignments.forEach((range, i) => {
