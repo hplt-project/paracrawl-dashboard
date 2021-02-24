@@ -39,6 +39,14 @@
 				margin: 0 .5em;
 			}
 
+			#controls > .spacer {
+				flex: 1 1 auto;
+			}
+
+			#controls input {
+				vertical-align: middle;
+			}
+
 			#navigator, #document {
 				display: flex;
 			}
@@ -86,6 +94,15 @@
 				display: block;
 				margin: .25em 0;
 				padding: .25em;
+				border-left: 2px solid transparent;
+			}
+
+			.sentence[data-match] {
+				border-color: rgba(var(--alignment-color), var(--alignment-opacity));
+			}
+
+			.sentence[data-match='true'] {
+				border-color: transparent;
 				background-color: rgba(var(--alignment-color), var(--alignment-opacity));
 			}
 
@@ -93,6 +110,13 @@
 				content: attr(data-index);
 				color: #ccc;
 				padding-right: 1ch;
+			}
+
+			.show-scores .sentence[data-score]::after {
+				display: block;
+				font-size: 0.8em;
+				content: '(score: ' attr(data-score) ')';
+				text-align: right;
 			}
 
 
@@ -112,8 +136,11 @@
 			<div class="col" data-property="aligned_trg" data-label="Aligned English text"></div>
 		</div>
 		<div id="controls">
-			<label><input type="checkbox" id="sync-scrolling" checked> Sync scrolling</label>
-			<input type="range" min=0 max=100 id="alignment-opacity" value=40 title="Alignment colour opacity">
+			<label title="Scroll all columns at the same time"><input type="checkbox" id="sync-scrolling" checked> Sync Scrolling</label>
+			<div class="spacer"></div>
+			<label title="Show or hide the score in each aligend sentence pair"><input type="checkbox" id="alignment-scores"> Show Scores</label>
+			<label title="Alignments with a score lower than the threshold will not be fully coloured.">Score Threshold: <input type="range" min=0 max=100 id="alignment-threshold" value=0 title="Matched sentence pairs below threshold are not highlighted"></label>
+			<label title="Changes the opacity of the colouring of aligned sentence pairs">Colour Intensity: <input type="range" min=0 max=100 id="alignment-opacity" value=40></label>
 		</div>
 		<script>
 			const colours = [
@@ -153,11 +180,11 @@
 				// Listen for updates
 				el.addEventListener('input', e => {
 					window.localStorage[key] = JSON.stringify(el[prop]);
-					callback(el[prop]);
+					callback.call(el, el[prop]);
 				});
 
 				// Call once to initialize
-				callback(el[prop]);
+				callback.call(el, el[prop]);
 			}
 
 			Array.prototype.last = function() {
@@ -177,6 +204,14 @@
 					cssRule = sheet.insertRule(`.sentence[data-index='${index}'] {
 						outline: 2px solid black;
 					}`);
+			}
+
+			let threshold = 0.0;
+
+			function updateThreshold() {
+				document.querySelectorAll('[data-score]').forEach(el => {
+					el.dataset.match = parseFloat(el.dataset.score) >= threshold;
+				});
 			}
 
 			async function populate(selector, url, callback) {
@@ -263,7 +298,11 @@
 								
 								// If we matched it, good! We're done searching for this sentence
 								if (text == sentence)
-									return alignment.concat([{src: [offset, offset + len], trg: [i, i + 1]}]);
+									return alignment.concat([{
+										src: [offset, offset + len],
+										trg: [i, i + 1],
+										score: doc['aligned_scores'][i]
+									}]);
 
 								// If we joined a text longer than sentence, stop trying to glue
 								// and try the next beginning sentence.
@@ -283,16 +322,22 @@
 						aligned_cols.forEach(col => {
 							Array.from(container.querySelectorAll(`[data-property="${col}"] > .sentence`)).slice(...range.trg).forEach(span => {
 								span.style.setProperty('--alignment-color', colours[i % 20]);
+								span.title = `Score: ${range.score}`;
+								span.dataset.score = range.score;
 							});
 						});
 
 						text_cols.forEach(col => {
 							Array.from(container.querySelectorAll(`[data-property="${col}"] > .sentence`)).slice(...range.src).forEach(span => {
 								span.style.setProperty('--alignment-color', colours[i % 20]);
+								span.title = `Score: ${range.score}`;
+								span.dataset.score = range.score;
 							});
 						});
 					});
 				});
+
+				updateThreshold();
 			}
 
 			const columns = document.querySelectorAll('.col');
@@ -336,6 +381,16 @@
 			document.querySelector('#document').addEventListener('click', e => {
 				if (e.target.matches('.sentence'))
 					highlight(e.target.dataset.index);
+			});
+
+			connect('#alignment-scores', value => {
+				document.body.classList.toggle('show-scores', value);
+			});
+
+			connect('#alignment-threshold', function(value) {
+				threshold = parseInt(value) / 100;
+				this.title = `score >= ${threshold.toFixed(2)}`;
+				updateThreshold();
 			});
 
 			connect('#alignment-opacity', value => {
