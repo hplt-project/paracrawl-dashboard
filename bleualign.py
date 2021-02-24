@@ -114,7 +114,7 @@ def get_document(filename, index):
 
 def get_document_with_aligned(filename, index):
 	doc = get_document(filename, index)
-	aligned_offsets = aligned_indexes[filename][(doc['url_src'], doc['url_trg'])]
+	aligned_offsets = aligned_indexes[filename].get((doc['url_src'], doc['url_trg']), [])
 	rows = list(get_aligned_sentences(filename, aligned_offsets))
 	if rows:
 		_, _, doc['aligned_src'], doc['aligned_trg'], doc['aligned_scores'] = zip(*rows)
