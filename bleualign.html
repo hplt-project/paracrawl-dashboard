@@ -61,10 +61,15 @@
 			}
 
 			#navigator > select {
-				flex: 0 0 50%;
+				flex: 1 1 0;
 				height: 100%;
 				overflow: hidden; /* Don't grow horizontally please */
 				border: 1px solid #ccc;
+			}
+
+			#navigator > #file-list,
+			#navigator > #document-list {
+				flex: 3 3 0;
 			}
 
 			#document {
@@ -124,7 +129,10 @@
 	</head>
 	<body>
 		<div id="navigator">
-			<select id="file-list" size=10 resize></select>
+			<select id="lang-filter" size=10 multiple></select>
+			<select id="year-filter" size=10 multiple></select>
+			<select id="section-filter" size=10 multiple></select>
+			<select id="file-list" size=10></select>
 			<select id="document-list" size=10></select>
 		</div>
 		<div id="document">
@@ -228,11 +236,70 @@
 			}
 
 			async function fetchFileList() {
-				populate('#file-list', '/files/', file => {
-					const option = new Option(file.name)
-					option.dataset.link = file.link;
-					return option;
+				const fileFilter = document.querySelector('#file-list');
+				const languageFilter = document.querySelector('#filter-language');
+				const sectionFilter = document.querySelector('#section-filter');
+				const files = await (await fetch('/files/')).json();
+
+				const props = ['lang', 'year', 'section'];
+
+				// Add lang, year, and section info to files
+				files.forEach(file => {
+					const match = file.name.match(/^([A-Z]+-[A-Z]+)-(\d{4})-(\w+)-/);
+					[null, ...props].forEach((prop, n) => {
+						if (prop) file[prop] = match[n];
+					})
 				});
+
+				// Set of possible values per prop
+				const index = files.reduce((index, file) => {
+					for (prop of props)
+						index[prop].add(file[prop])
+					return index;
+				}, Object.fromEntries(props.map(prop => [prop, new Set()])));
+
+				// Find filter lists
+				const lists = Object.fromEntries(props.map(prop => {
+					return [prop, document.querySelector(`#${prop}-filter`)];
+				}));
+
+				// Fill the #prop-filter select elements
+				['lang', 'year', 'section'].forEach(prop => {
+					const values = Array.from(index[prop]).sort();
+					values.forEach(value => {
+						lists[prop].options.add(new Option(value, value, true, true));
+					});
+				});
+
+				const fileList = document.querySelector('#file-list');
+
+				function updateFileList() {
+					const filters = Object.fromEntries(props.map(prop => {
+						return [prop, new Set(Array.from(lists[prop].selectedOptions).map(option => option.value))];
+					}));
+
+					const selection = files.filter(file => {
+						for (prop of props)
+							if (!filters[prop].has(file[prop]))
+								return false;
+
+						return true;
+					});
+
+					fileList.options.length = 0; // fast clear
+
+					selection.forEach(file => {
+						const option = new Option(file.name);
+						option.dataset.link = file.link;
+						fileList.options.add(option);
+					});
+				}
+
+				props.forEach(prop => {
+					lists[prop].addEventListener('input', updateFileList);
+				});
+
+				updateFileList();
 			}
 
 			async function fetchDocumentList(link) {
