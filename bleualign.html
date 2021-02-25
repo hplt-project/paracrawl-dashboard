@@ -80,13 +80,24 @@
 
 			#document .col {
 				flex: 1 1 0;
-				padding: 1em;
+				padding: 1em 1em 1em 0.25em;
 				overflow-y: auto;
 				word-break: break-word; /* Because German...*/
 			}
 
+			#document .col:first-child {
+				padding-left: 1em;
+			}
+
+			#document .col::after {
+				content: '';
+				display: block;
+				height: 0.75em; /* bit of spacing at the end of columns */
+			}
+
 			#document .separator {
 				flex:  0 0 1px;
+				margin: 0 0.75em 0 0;
 				background: #ccc;
 			}
 
