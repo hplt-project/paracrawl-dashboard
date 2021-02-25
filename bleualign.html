@@ -309,7 +309,10 @@
 					option.dataset.link = document.link;
 					return option;
 				});
-			} 
+			}
+
+			let currentDocument = null;
+			let currentRequest = null;
 
 			async function fetchDocument(link) {
 				const container = document.querySelector('#document');
@@ -320,9 +323,20 @@
 						component.removeChild(component.firstChild);
 				});
 
+				// Still downloading something else? Abort.
+				if (currentRequest)
+					currentRequest.abort();
+
+				currentDocument = link;
+				currentRequest = new AbortController();
+
 				// Download
-				const response = await fetch(link);
+				const response = await fetch(link, {signal: currentRequest.signal});
 				const doc = await response.json();
+
+				// Did some other document get selected after we finished downloading? Abort.
+				if (currentDocument != link)
+					return;
 				
 				// Populate
 				Array.from(container.querySelectorAll('[data-property]')).forEach(component => {
