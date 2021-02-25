@@ -229,8 +229,7 @@
 			async function populate(selector, url, callback) {
 				const select = document.querySelector(selector);
 				select.disabled = true;
-				while (select.options.length > 0)
-					select.options.remove(0);
+				select.options.length = 0;
 				const response = await fetch(url);
 				const items = await response.json();
 				items.forEach(item => select.options.add(callback(item)));
