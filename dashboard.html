@@ -14,6 +14,18 @@
 
 			#job-grid .job {
 				display: block;
+				text-decoration: none;
+				padding: 0 0.25em;
+				margin: 0.125em 0;
+			}
+
+			#job-grid .job:hover {
+				text-decoration: underline;
+			}
+
+			#job-grid .job.running {
+				background: #0a0;
+				color: white;
 			}
 
 			#job-grid th, #job-grid td {
@@ -32,10 +44,6 @@
 
 			#job-grid thead td:first-child {
 				width: 2em;
-			}
-
-			.job.running {
-				color: green;
 			}
 
 		</style>
