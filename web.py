@@ -210,8 +210,16 @@ def send_file(filename, **kwargs):
 	return FileResponse(open(filename, 'rb'), **kwargs)
 
 
+class JSONEncoder(json.JSONEncoder):
+	def default(self, data):
+		if isinstance(data, frozenset):
+			return list(data)
+		else:
+			return super().default(data)
+
+
 def send_json(data, **kwargs):
-	return Response(json.dumps(data), **kwargs)
+	return Response(json.dumps(data, cls=JSONEncoder), **kwargs)
 
 
 def main(app):
