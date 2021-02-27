@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Paracrawl dashboard</title>
+		<style>
+			body {
+				font:  14px/18px sans-serif;
+			}
+
+			#job-grid	{
+				width: 100%;
+				table-layout: fixed;
+			}
+
+			#job-grid .job {
+				display: block;
+			}
+
+			#job-grid th, #job-grid td {
+				vertical-align: top;
+			}
+
+			#job-grid tr:nth-child(even) {
+				background: #eee;
+			}
+
+			#job-grid .unavailable::after {
+				content: 'n/a';
+				color: #ccc;
+				text-align: center;
+			}
+
+			#job-grid thead td:first-child {
+				width: 2em;
+			}
+
+			.job.running {
+				color: green;
+			}
+
+		</style>
+	</head>
+	<body>
+		<script>
+			function identity(x) {
+				return x;
+			}
+
+			class List extends EventTarget {
+				constructor(keyFn) {
+					super();
+					this._keyFn = keyFn || identity;
+					this._index = new Map();
+				}
+
+				update(items) {
+					const visited = new Set();
+
+					items.forEach(item => {
+						const key = this._keyFn(item);
+						visited.add(key);
+
+						if (this._index.has(key)) {
+							const current = this._index.get(key);
+							Object.assign(current, item);
+							current.dispatchEvent(new CustomEvent('update', {detail: current}));
+						} else {
+							const current = new EventTarget();
+							this._index.set(key, current);
+							Object.assign(current, item);
+							this.dispatchEvent(new CustomEvent('add', {detail: current}));
+						}
+					});
+
+					this._index.forEach((current, key, map) => {
+						if (!visited.has(key)) {
+							map.delete(key);
+							current.dispatchEvent(new CustomEvent('delete', {detail: current}))
+						}
+					});
+				}
+			}
+
+			class Interval {
+				constructor(fn, interval) {
+					this.fn = fn;
+					this.interval = interval;
+					this.timeout = null;
+				}
+
+				start() {
+					this.timeout = setTimeout(this.trigger.bind(this), this.interval);
+				}
+
+				startImmediate() {
+					this.timeout = setTimeout(this.trigger.bind(this), 0);
+				}
+
+				stop() {
+					clearTimeout(this.timeout);
+					this.timeout = null;
+				}
+
+				async trigger() {
+					await this.fn();
+					
+					// Only schedule again if we didn't get stopped while waiting for fn.
+					if (this.timeout !== null)
+						this.start();
+				}
+			}
+
+			class Router {
+				constructor() {
+					this.routes = [];
+					this.states = {};
+					this.state = 0;
+					this.serial = 0;
+
+					window.addEventListener('popstate', e => {
+						if (e.state in this.states)
+							this.setState(e.state);
+						else
+							this.dispatchInternal(document.location.pathname);
+					});
+				}
+
+				add(pattern, callback) {
+					this.routes.push({pattern, callback})
+				}
+
+				async dispatchInternal(url) {
+					const {route, match} = first(this.routes, route => {
+						const match = url.match(route.pattern);
+						if (match)
+							return {route, match};
+					});
+
+					if (!route)
+						throw Error(`No route for "${url}"`);
+
+					const state = ++this.serial;
+					const page = h('div', {className: 'page'}, []);
+
+					this.states[state] = page;
+					this.setState(state);
+
+					return route.callback(page, {url, match});
+				}
+
+				async dispatch(url) {
+					const rv = this.dispatchInternal(url);
+					window.history.pushState(this.state, url, undefined);
+					return rv;
+				}
+
+				setState(state) {
+					this.state = state;
+					this.render();
+				}
+
+				render() {
+					Object.values(this.states).forEach(page => {
+						if (page.parentNode) {
+							page.parentNode.removeChild(page)
+							page.dispatchEvent(new CustomEvent('hide'));
+						}
+					});
+
+					if (this.state) {// prevent rendering of 0 state
+						const page = this.states[this.state];
+						document.body.appendChild(page);
+						page.dispatchEvent(new CustomEvent('show'));
+					}
+				}
+			}
+
+			function first(items, fn) {
+				/* Similar to Array.prototype.find, but returns return value of fn */
+				for (let item of items) {
+					let value = fn(item);
+					if (value)
+						return value;
+				}
+				return undefined;
+			}
+
+			function listen(event, selector, callback) {
+				document.body.addEventListener(event, e => {
+					if (e.target.matches(selector))
+						callback(e);
+				});
+			}
+
+			function overlay() {
+				const root = h('div', {'className': 'overlay'}, [
+					h('button', {
+						'className': 'close-button',
+						'title': 'Close',
+						'onclick': e => document.body.removeChild(root)
+					}, ['\u00D7'])
+				]);
+				return document.body.appendChild(root);
+			}
+
+			function h(name, options, children) {
+				const el = document.createElement(name);
+				
+				if (options)
+					Object.assign(el, options);
+				
+				if (children)
+					children.forEach(child => {
+						if (!(child instanceof HTMLElement))
+							child = document.createTextNode(child);
+						el.appendChild(child);
+					});
+
+				return el;
+			}
+
+			async function fetchJSON(url, options) {
+				const response = await fetch(url, options);
+				return await response.json();
+			}
+
+			function renderGrid(table, collections) {
+				const languages = Array.from(collections.reduce((languages, collection) => {
+					collection.languages.forEach(language => languages.add(language))
+					return languages
+				}, new Set())).sort();
+
+				table.appendChild(h('thead', {}, [
+					h('tr', {}, [
+						h('td'),
+						...collections.map(collection => h('th', {}, [collection.name]))
+					])
+				]));
+
+				const grid = Object.fromEntries(collections.map(collection => [collection.name, {}]));
+
+				table.appendChild(h('tbody', {},
+					languages.map(language => h('tr', {}, [
+						h('th', {}, [language]),
+						...collections.map(collection => {
+							const cell = h('td', {}, []);
+							if (!collection.languages.includes(language))
+								cell.classList.add('unavailable');
+							grid[collection.name][language] = cell;
+							return cell;
+						})
+					]))
+				));
+
+				return grid;
+			}
+
+			function addJob(grid, job) {
+				const cell = grid[job.collection][job.language].appendChild(h('a',
+					{className: 'job', href: job.link},
+					[job.slurm['JOBID']]));
+
+				cell.title = job.slurm['TIME']
+
+				const render = () => {
+					cell.title = job.slurm['TIME'];
+					cell.classList.toggle('running', job.slurm['STATE'] == 'RUNNING');
+				};
+
+				render();
+
+				job.addEventListener('update', () => render);
+
+				job.addEventListener('delete', () => {
+					cell.parentNode.removeChild(cell)
+				}, {once: true});
+			}
+
+			const router = new Router();
+
+			router.add(/^\/$/, async (root) => {
+				const collections = await fetchJSON('/collections/');
+				collections.sort((left, right) => left.name.localeCompare(right.name));
+
+				const table = h('table', {'id': 'job-grid'});
+				root.appendChild(table);
+
+				const grid = renderGrid(table, collections);
+				
+				const index = new List(job => job.id);
+				index.addEventListener('add', e => addJob(grid, e.detail));
+				
+				const update = async () => {
+					index.update(await fetchJSON('/jobs/'));
+				}
+
+				const updater = new Interval(update, 30000);
+				root.addEventListener('hide', e => updater.stop());
+				root.addEventListener('show', e => updater.startImmediate());
+				
+				updater.startImmediate(); // We missed the show event for the first load
+			});
+
+			router.add(/^\/jobs\/(?<job_id>\d+)\/(?<job_array_id>\d+)$/, async (root, {url}) => {
+				const response = await fetch(url);
+				const job = await response.json();
+
+				root.appendChild(h('h1', {}, [job.slurm['JobId']]));
+
+				root.appendChild(h('section', {className: 'stdout'}, [
+					h('h2', {}, ['StdOut']),
+					h('pre', {}, [job['stdout']])
+				]));
+
+				root.appendChild(h('section', {className: 'stderr'}, [
+					h('h2', {}, ['StdErr']),
+					h('pre', {}, [job['stderr']])
+				]));
+			})
+
+			listen('click', 'a.job', async (e) => {
+				try {
+					router.dispatch(e.target.pathname);
+					e.preventDefault();
+				} catch (e) {
+					console.error(e);
+				}
+			});
+
+			router.dispatch(document.location.pathname);
+		</script>
+	</body>
+</html>

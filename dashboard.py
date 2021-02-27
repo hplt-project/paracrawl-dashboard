@@ -3,12 +3,7 @@ import re
 import sys
 import os
 import subprocess
-from functools import partial
-from pprint import pprint, pformat
-from collections import defaultdict
-from itertools import chain
-from web import Application, Response, main
-from htl import _ as h
+from web import Application, Response, main, send_file, send_json
 
 
 class Job(dict):
@@ -71,80 +66,51 @@ collections = read_collections()
 
 app = Application()
 
+
 @app.route('/')
 def index(request):
-	jobs = slurm.jobs()
-	languages = set(chain.from_iterable(collection.languages for collection in collections.values()))
-	grid = {
-		language: {collection: [] for collection in collections.keys()}
-		for language in sorted(languages)
-	}
-	
-	for job in jobs:
-		if hasattr(job, 'language') and hasattr(job, 'collection'):
-			grid[job.language][job.collection].append(job)
+	return send_file(os.path.join(os.path.dirname(__file__), 'dashboard.html'))
 
-	return Response(h.table(
-		h.tr(
-			h.td(),
-			(h.th(collection) for collection in collections.keys())
-		),
-		(
-			h.tr(
-				h.th(language),
-				(
-					h.td(
-						h.ul(
-							(
-								h.li(
-									h.a(job['JOBID'], href="/jobs/{ARRAY_JOB_ID}/{ARRAY_TASK_ID}".format(**job))
-								) for job in grid[language][collection]
-							)
-						)
-					) for collection in collections.keys()
-				)
-			) for language in languages
-		)
-	))
 
-	html = "<table><tr><th></th>"
-	for collection in collections.keys():
-		html += "<th>" + collection + "</th>"
-	html += "</tr>"
-	for language, lang_collections in grid.items():
-		html += "<tr><th>" + language + "</th>"
-		for collection in collections.keys():
-			html += "<td><ul>"
-			for job in lang_collections[collection]:
-				html += "<li><a href=\"/jobs/{ARRAY_JOB_ID}/{ARRAY_TASK_ID}\">{JOBID}</li>".format(**job)
-			html += "</ul></td>"
-		html += "</tr>"
-	html += "</table>"
-	return Response(html)
+@app.route('/collections/')
+def list_collections(request):
+	return send_json([
+		{
+			'name': name,
+			'languages': collection.languages
+		} for name, collection in collections.items()
+	])
+
+
+@app.route('/jobs/')
+def list_jobs(request):
+	return send_json([
+		{
+			'id': job['JOBID'],
+			'step': job.step,
+			'language': job.language,
+			'collection': job.collection,
+			'slurm': job, # the dict data
+			'link': app.url_for('show_job', array_job_id=int(job['ARRAY_JOB_ID']), array_task_id=int(job['ARRAY_TASK_ID']))
+			        if 'ARRAY_TASK_ID' in job else None
+		} for job in slurm.jobs() if hasattr(job, 'language') and hasattr(job, 'collection')
+	])
 
 
 def tail(filename):
-	with open(filename, 'r') as fh:
-		return fh.read()
+	if os.path.exists(filename):
+		with open(filename, 'r') as fh:
+			return fh.read()
 
 
 @app.route('/jobs/<int:array_job_id>/<int:array_task_id>')
-def task_log(request, array_job_id, array_task_id):
+def show_job(request, array_job_id, array_task_id):
 	job = slurm.job('{:d}_{:d}'.format(array_job_id, array_task_id))
-	html = h.body(
-		h.h2("StdOut"),
-		h.pre(tail(job['StdOut'])),
-		h.h2("StdErr"),
-		h.pre(tail(job['StdErr'])),
-		h.h2("Job"),
-		h.table(
-			(
-				h.tr(h.th(key, align="left"), h.td(h.pre(value)))
-				for key, value in job.items()
-			)
-		)
-	)
-	return Response(html, headers={"Content-Type": "text/html"})
+	return send_json({
+		'slurm': job,
+		'stdout': tail(job['StdOut']),
+		'stderr': tail(job['StdErr'])
+	})
 
 
 if __name__ == "__main__":        
