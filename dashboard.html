@@ -23,8 +23,20 @@
 				text-decoration: underline;
 			}
 
-			#job-grid .job.running {
+			#job-grid .job.completed,
+			#job-grid .progress-bar .completed {
 				background: #0a0;
+				color: white;
+			}
+
+			#job-grid .job.running,
+			#job-grid .progress-bar .running {
+				background: #fc0;
+			}
+
+			#job-grid .job.cancelled,
+			#job-grid .progress-bar .cancelled {
+				background: #333;
 				color: white;
 			}
 
@@ -44,6 +56,65 @@
 
 			#job-grid thead td:first-child {
 				width: 2em;
+			}
+
+			.job-array h3 {
+				font-size: inherit;
+				font-weight: normal;
+				margin: 0;
+			}
+
+			.job-array ol {
+				margin: 0;
+				padding: 0 .4em 0 0;
+			}
+
+			.job-array.collapsed ol {
+				display: none;
+			}
+
+			.job-array .progress {
+				float: right;
+				font-size: 0.8em;
+				line-height: 1.7;
+				padding-right: 0.5em;
+				pointer-events: none;
+			}
+
+			.job-array .progress-bar {
+				display: block;
+				width: 100%;
+				font: 4px/4px sans-serif;
+				background: white;
+				pointer-events: none;
+			}
+
+			.job-array .progress-bar > div {
+				display: inline-block;
+				height: 1em;
+			}
+
+			.job-array:not(.running) .progress-bar {
+				display: none;
+			}
+
+			.collapsible-handle {
+				cursor: pointer;
+			}
+
+			.collapsible-handle::before {
+				content: '';
+				display: inline-block;
+				width: 0;
+				border: .4em solid black;
+				border-top-color: transparent;
+				border-right-color: transparent;
+				border-bottom-color: transparent;
+				transform-origin: 0 50%;
+			}
+
+			.collapsible:not(.collapsed) .collapsible-handle::before {
+				transform: rotate(90deg) translateY(-25%);
 			}
 
 		</style>
@@ -158,7 +229,7 @@
 
 				async dispatch(url) {
 					const rv = this.dispatchInternal(url);
-					window.history.pushState(this.state, url, undefined);
+					window.history.pushState(this.state, '', url);
 					return rv;
 				}
 
@@ -211,11 +282,20 @@
 				return document.body.appendChild(root);
 			}
 
+			function assign(obj, props) {
+				Object.entries(props).forEach(([key, val]) => {
+					if (typeof val === 'object' && key in obj)
+						assign(obj[key], val);
+					else
+						obj[key] = val;
+				});
+			}
+
 			function h(name, options, children) {
 				const el = document.createElement(name);
 				
 				if (options)
-					Object.assign(el, options);
+					assign(el, options);
 				
 				if (children)
 					children.forEach(child => {
@@ -251,11 +331,11 @@
 					languages.map(language => h('tr', {}, [
 						h('th', {}, [language]),
 						...collections.map(collection => {
-							const cell = h('td', {}, []);
+							const td = h('td', {}, []);
 							if (!collection.languages.includes(language))
-								cell.classList.add('unavailable');
-							grid[collection.name][language] = cell;
-							return cell;
+								td.classList.add('unavailable');
+							grid[collection.name][language] = {td};
+							return td;
 						})
 					]))
 				));
@@ -263,16 +343,94 @@
 				return grid;
 			}
 
-			function addJob(grid, job) {
-				const cell = grid[job.collection][job.language].appendChild(h('a',
-					{className: 'job', href: job.link},
-					[job.slurm['JOBID']]));
+			function formatJob(job) {
+				if ('ArrayJobId' in job.slurm && 'ArrayTaskId' in job.slurm)
+					return `${job.slurm['ArrayJobId']}_${job.slurm['ArrayTaskId']}`;
+				else
+					return job.slurm['JobId'];
+			}
 
-				cell.title = job.slurm['TIME']
+			function formatJobArray(job) {
+				const match = job.slurm['JobName'].match(/(\w+)-/)
+				return match && match[1] || job.slurm['JobName']
+			}
+
+			function formatPercentage(cnt, sum) {
+				const frac = sum > 0 ? cnt / sum : 0;
+				return Math.floor((frac * 10000.0) / 100.0).toFixed(1) + '%';
+			}
+
+			function addJobSection(cell, job) {
+				const list = h('ol', {}, []);
+				const progress = h('span', {className: 'progress'});
+				const bar = h('div', {className: 'progress-bar'}, [
+					h('div', {className: 'running', style: {width: 'var(--running)'}}),
+					h('div', {className: 'completed', style: {width: 'var(--completed)'}}),
+					h('div', {className: 'cancelled', style: {width: 'var(--cancelled)'}}),
+				]);
+
+				cell.td.appendChild(h('div', {className: 'job-array collapsible collapsed'}, [
+					h('h3', {className: 'collapsible-handle'}, [
+						formatJobArray(job),
+						progress, bar,
+					]),
+					list
+				]));
+
+				list.update = () => {
+					const counts = {
+						'job': 0,
+						'running': 0,
+						'completed': 0,
+						'cancelled': 0
+					};
+
+					list.querySelectorAll('.job').forEach(el => {
+						Object.keys(counts).forEach(className => {
+							if (el.classList.contains(className))
+								counts[className] += 1;
+						})
+					});
+
+					// Set each state as a percentage variable for css
+					Object.keys(counts).forEach(className => {
+						list.parentNode.style.setProperty(`--${className}`, formatPercentage(counts[className], counts['job']));
+					});
+					
+					// Mark the whole list as running if there is something running
+					list.parentNode.classList.toggle('running', counts['running'] > 0);
+
+					// Update the little progress indicator text
+					progress.textContent = `${counts['running']}/${counts['job']}`;
+				}
+
+				return list;
+			}
+
+			function addJob(grid, job) {
+				const id = job.slurm['ArrayJobId'] || job.slurm['JobId'];
+
+				const cell = grid[job.collection][job.language];
+
+				if (!('lists' in cell))
+					cell.lists = {};
+
+				if (!(id in cell.lists))
+					cell.lists[id] = addJobSection(cell, job);
+
+				const list = cell.lists[id];
+				const link = list.appendChild(h('a',
+					{className: 'job', href: job.link},
+					[formatJob(job)]));
 
 				const render = () => {
-					cell.title = job.slurm['TIME'];
-					cell.classList.toggle('running', job.slurm['STATE'] == 'RUNNING');
+					link.dataset.slurm = JSON.stringify(job.slurm);
+					link.title = `Elapsed: ${job.slurm['Elapsed']}`;
+
+					link.classList.toggle('running',   'State' in job.slurm && job.slurm['State'] == 'RUNNING');
+					link.classList.toggle('completed', 'State' in job.slurm && job.slurm['State'] == 'COMPLETED');
+					link.classList.toggle('cancelled', 'State' in job.slurm && job.slurm['State'].match(/^CANCELLED/));
+					list.update(); // Update list running status
 				};
 
 				render();
@@ -280,7 +438,7 @@
 				job.addEventListener('update', () => render);
 
 				job.addEventListener('delete', () => {
-					cell.parentNode.removeChild(cell)
+					link.parentNode.removeChild(link)
 				}, {once: true});
 			}
 
@@ -299,7 +457,8 @@
 				index.addEventListener('add', e => addJob(grid, e.detail));
 				
 				const update = async () => {
-					index.update(await fetchJSON('/jobs/'));
+					const jobs = await fetchJSON('/jobs/');
+					index.update(jobs);
 				}
 
 				const updater = new Interval(update, 30000);
@@ -324,6 +483,16 @@
 					h('h2', {}, ['StdErr']),
 					h('pre', {}, [job['stderr']])
 				]));
+
+				root.appendChild(h('section', {className: 'props'}, [
+					h('h2', {}, ['Properties']),
+					h('dl', {}, Object.entries(job.slurm).map(([key, value]) => {
+						return [
+							h('dt', {}, [key]),
+							h('dd', {}, [value])
+						];
+					}).flat(1))
+				]));
 			})
 
 			listen('click', 'a.job', async (e) => {
@@ -333,6 +502,16 @@
 				} catch (e) {
 					console.error(e);
 				}
+			});
+
+			function findParent(el, selector) {
+				while (el && !el.matches(selector))
+					el = el.parentNode;
+				return el;
+			}
+
+			listen('click', '.collapsible .collapsible-handle', e => {
+				findParent(e.target, '.collapsible').classList.toggle('collapsed');
 			});
 
 			router.dispatch(document.location.pathname);
