@@ -47,7 +47,9 @@ class Slurm:
 			lines = fh.readlines()
 		for line in lines:
 			timestamp, job_id, arguments = line.rstrip().split(' ', maxsplit=2)
-			if int(timestamp) >= int(since):
+			if not job_id.isnumeric():
+				continue
+			if timestamp.isnumeric() and int(timestamp) >= int(since):
 				yield from self.jobs_from_cli_args({'JobId': job_id, 'SubmitTime': timestamp}, arguments.split(' '))
 
 	def current_jobs(self):
@@ -64,7 +66,13 @@ class Slurm:
 			'TIME': 'Elapsed',
 		}
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
-		return [Job(dict(zip(headers, line.strip().split('|')))) for line in lines[1:]]
+		for line in lines[:]:
+			job = dict(zip(headers, line.strip().split('|')))
+			if 'ArrayTaskId' in job and '-' in job['ArrayTaskId']:
+				for task_id in self.parse_job_arrays(job['ArrayTaskId']):
+					yield Job({**job, 'ArrayTaskId': task_id})
+			else:
+				yield Job(job)
 
 	def accounting_jobs(self, additional_args=[]):
 		output = subprocess.check_output(['sacct',
@@ -76,10 +84,25 @@ class Slurm:
 		lines = output.decode().splitlines()
 		mapping = {
 			'JobIDRaw': 'JobIDRaw',
+			'JobState': 'State',
 			'JobID': 'JobId'
 		}
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
-		return [Job(dict(zip(headers, line.strip().split('|')))) for line in lines[1:]]
+		for line in lines[:]:
+			job = dict(zip(headers, line.strip().split('|')))
+			match = re.match(r'^(\d+)(_\[(\d+)-(\d+)\])$', job['JobId'])
+			if not match:
+				continue
+
+			if match[2]:
+				for task_id in range(int(match[3]), int(match[4]) + 1):
+					yield Job({**job,
+						'JobId': '{}_{}'.format(match[1], task_id),
+						'ArrayJobId': match[1],
+						'ArrayTaskId': str(task_id)
+					})
+			else:
+				yield Job(job)
 
 	def jobs(self):
 		scheduled = {job['JobId']: job for job in self.scheduled_jobs()}
