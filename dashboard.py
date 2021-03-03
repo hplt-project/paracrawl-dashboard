@@ -6,7 +6,7 @@ import subprocess
 from itertools import chain
 from datetime import datetime, timedelta
 from pprint import pprint
-from web import Application, Response, main, send_file, send_json
+from web import Application, Response, FileResponse, main, send_file, send_json
 
 
 
@@ -258,6 +258,36 @@ def show_job(request, array_job_id, array_task_id):
 		'stderr': tail(job['StdErr'])
 	})
 
+
+class Tailer:
+	def __init__(self, *paths):
+		self.proc = subprocess.Popen(['tail', '-n', '+0', '-f', *paths], stdout=subprocess.PIPE)
+
+	def fileno(self):
+		return self.proc.stdout.fileno()
+
+	def read(self, *args, **kwargs):
+		return self.proc.stdout.read(*args, **kwargs)
+
+	def close(self):
+		self.proc.stdout.close()
+		self.proc.terminate() # closing otherwise tail won't notice
+		self.proc.wait() # wait to prevent zombie
+
+
+@app.route('/jobs/<int:array_job_id>/<int:array_task_id>/<any(stdout,stderr):stream>')
+def show_stream(request, array_job_id, array_task_id, stream):
+	job = slurm.job('{:d}_{:d}'.format(array_job_id, array_task_id))
+
+	if not job:
+		return Response('Job not found in schedule log', status_code=404)
+
+	mapping = {
+		'stdout': 'StdOut',
+		'stderr': 'StdErr'
+	}
+
+	return FileResponse(Tailer(job[mapping[stream]]))
 
 if __name__ == "__main__":        
 	main(app)
