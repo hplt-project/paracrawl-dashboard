@@ -534,7 +534,7 @@
 
 				render();
 
-				job.addEventListener('update', () => render);
+				job.addEventListener('update', render);
 
 				job.addEventListener('delete', () => {
 					link.parentNode.removeChild(link)
