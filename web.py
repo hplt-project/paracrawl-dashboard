@@ -4,12 +4,14 @@ import os
 import json
 import sys
 import mimetypes
+from abc import ABC, abstractmethod
 from functools import partial
 from typing import Set, Callable, Type, Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from pprint import pprint, pformat
 from collections import defaultdict
 from itertools import chain
+from urllib.parse import quote_plus, unquote_plus
 import socket # For gethostbyaddr()
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler, HTTPStatus, test as _http_server_test
 import shutil
@@ -72,11 +74,69 @@ class FileResponse(Response):
 		self.fh.close()
 
 
-@dataclass
-class URLType:
-	pattern: str
-	format: str
-	cast: Type
+class URLConverter(ABC):
+	@abstractmethod
+	def to_pattern(self) -> re.Pattern:
+		pass
+
+	@abstractmethod
+	def to_python(self, val:str) -> Any:
+		pass
+
+	@abstractmethod
+	def to_str(self, val:Any) -> str:
+		pass
+
+
+class PathConverter(URLConverter):
+	def to_pattern(self):
+		return r'.*'
+
+	def to_python(self, val):
+		return unquote_plus(str(val), safe='/')
+
+	def to_str(sel, val):
+		return quote_plus(str(val), safe='/')
+
+
+class AnyConverter(URLConverter):
+	def __init__(self, *options):
+		self.options = options
+
+	def to_pattern(self):
+		return '|'.join(re.escape(option) for option in self.options)
+
+	def to_python(self, val):
+		if val not in self.options:
+			raise RuntimeError('How did this match this pattern?')
+		return unquote_plus(str(val))
+
+	def to_str(self, val):
+		if val not in self.options:
+			raise ValueError('Not one of the options that fit in this part of the url')
+		return quote_plus(str(val))
+
+
+class StrConverter(URLConverter):
+	def to_pattern(self):
+		return r'[^/]+'
+
+	def to_python(self, val):
+		return unquote_plus(str(val))
+
+	def to_str(self, val):
+		return quote_plus(str(val))
+
+
+class IntConverter(URLConverter):
+	def to_pattern(self):
+		return r'\d+'
+
+	def to_python(self, val):
+		return int(val)
+
+	def to_str(self, val):
+		return '{:d}'.format(val)
 
 
 @dataclass
@@ -86,15 +146,16 @@ class Route:
 	callback: Callable
 	path_expression: re.Pattern
 	path_format: str
-	path_placeholders: Dict[str,URLType]
+	path_placeholders: Dict[str,URLConverter]
 
 
 class Application:
 	def __init__(self):
 		self.url_types = {
-			'any': URLType(r'.*', '!s', str),
-			'str': URLType(r'[^/]+', '!s', str),
-			'int': URLType(r'\d+', ':d', int),
+			'any': AnyConverter,
+			'path': PathConverter,
+			'str': StrConverter,
+			'int': IntConverter,
 		}
 
 		self.routes = []
@@ -116,11 +177,11 @@ class Application:
 		path_placeholders = {}
 		last_pos = 0
 		
-		for match in re.finditer(r'\<(?P<type>\w+):(?P<name>[a-z][a-z0-9_]*)\>', path_pattern):
-			url_type = self.url_types[match.group('type')]
+		for match in re.finditer(r'\<(?P<type>\w+)(?:\((?P<args>[\w,]*)\))?:(?P<name>[a-z][a-z0-9_]*)\>', path_pattern):
+			url_type = self.url_types[match.group('type')](*[arg.strip() for arg in match.group('args').split(',')] if match.group('args') else [])
 			path_placeholders[match.group('name')] = url_type
-			path_expression += re.escape(path_pattern[last_pos:match.start(0)]) + '(?P<{name}>{pattern})'.format(name=match.group('name'), pattern=url_type.pattern)
-			path_format += path_pattern[last_pos:match.start(0)] + '{{{name}{format}}}'.format(name=match.group('name'), format=url_type.format)
+			path_expression += re.escape(path_pattern[last_pos:match.start(0)]) + '(?P<{name}>{pattern})'.format(name=match.group('name'), pattern=url_type.to_pattern())
+			path_format += path_pattern[last_pos:match.start(0)] + '{{{name}}}'.format(name=match.group('name'))
 			last_pos = match.end(0)
 
 		path_expression += re.escape(path_pattern[last_pos:])
@@ -136,13 +197,13 @@ class Application:
 		for route in self.routes:
 			match = re.match(route.path_expression, path)
 			if match:
-				return route, {name: route.path_placeholders[name].cast(value) for name, value in match.groupdict().items()}
+				return route, {name: route.path_placeholders[name].to_python(value) for name, value in match.groupdict().items()}
 		return None, None
 
 	def url_for(self, name: str, **kwargs) -> str:
 		for route in self.routes:
 			if route.name == name:
-				return route.path_format.format(**kwargs)
+				return route.path_format.format(**{key: route.path_placeholders[key].to_str(val) for key, val in kwargs.items()})
 
 	def write_response(self, response: Response, handler: BaseHTTPRequestHandler):
 		response.write(handler)
