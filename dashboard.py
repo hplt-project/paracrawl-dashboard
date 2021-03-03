@@ -256,6 +256,10 @@ def list_jobs(request):
 			'language': job.language,
 			'collection': job.collection,
 			'slurm': job, # the dict data
+			'stdout': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stdout')
+			          if 'ArrayTaskId' in job else None,
+			'stderr': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stderr')
+			          if 'ArrayTaskId' in job else None,
 			'link': app.url_for('show_job', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']))
 			        if 'ArrayTaskId' in job else None
 		} for job in slurm.jobs() if hasattr(job, 'language') and hasattr(job, 'collection')
@@ -276,9 +280,10 @@ def show_job(request, array_job_id, array_task_id):
 		return Response('Job not found in schedule log', status_code=404)
 
 	return send_json({
+		'id': job['JobId'],
 		'slurm': job,
-		'stdout': tail(job['StdOut']),
-		'stderr': tail(job['StdErr'])
+		'stdout': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stdout'),
+		'stderr': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stderr')
 	})
 
 

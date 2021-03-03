@@ -158,30 +158,42 @@
 						}
 					});
 				}
+
+				find(key) {
+					return this._index.get(key);
+				} 
 			}
 
-			class Interval {
+			class Interval extends EventTarget {
 				constructor(fn, interval) {
+					super();
 					this.fn = fn;
 					this.interval = interval;
 					this.timeout = null;
 				}
 
 				start() {
+					this.dispatchEvent(new CustomEvent('start'));
 					this.timeout = setTimeout(this.trigger.bind(this), this.interval);
 				}
 
 				startImmediate() {
+					this.dispatchEvent(new CustomEvent('start'));
 					this.timeout = setTimeout(this.trigger.bind(this), 0);
 				}
 
 				stop() {
+					this.dispatchEvent(new CustomEvent('stop'));
 					clearTimeout(this.timeout);
 					this.timeout = null;
 				}
 
 				async trigger() {
-					await this.fn();
+					try {
+						await this.fn();
+					} catch (e) {
+						this.dispatchEvent(new CustomEvent('error', {detail: e}));
+					}
 					
 					// Only schedule again if we didn't get stopped while waiting for fn.
 					if (this.timeout !== null)
@@ -284,7 +296,7 @@
 
 			function assign(obj, props) {
 				Object.entries(props).forEach(([key, val]) => {
-					if (typeof val === 'object' && key in obj)
+					if (typeof val === 'object' && val !== null && key in obj)
 						assign(obj[key], val);
 					else
 						obj[key] = val;
@@ -468,30 +480,86 @@
 				updater.startImmediate(); // We missed the show event for the first load
 			});
 
-			router.add(/^\/jobs\/(?<job_id>\d+)\/(?<job_array_id>\d+)$/, async (root, {url}) => {
-				const response = await fetch(url);
-				const job = await response.json();
+			function stream(url, el) {
+				const abort = new AbortController();
+
+				fetch(url, {signal: abort.signal}).then(async response => {
+					const reader = response.body.getReader();
+
+					el.textContent = '';
+					const decoder = new TextDecoder("utf-8");
+
+					try {
+						while (true) {
+							const {done, value} = await reader.read();
+
+							if (done)
+								break;
+
+							el.textContent += decoder.decode(value);
+						}
+					} catch (e) {
+						if (e.name !== 'AbortError')
+							throw e;
+					};
+				});
+
+				return () => {
+					abort.abort();
+				}
+			}
+
+			router.add(/^\/jobs\/(?<job_id>\d+)\/(?<job_array_id>\d+)$/, (root, {url}) => {
+				const job = index.find(`${job_id}_${job_array_id}`)
+
+				fetch(url)\
+					.then(response => response.json())\
+					.then(index.update(job));
 
 				root.appendChild(h('h1', {}, [job.slurm['JobId']]));
 
+				function live(el, render) {
+					root.addEventListener('show', e => {
+						const stop = render(el);
+						root.addEventListener('hide', stop, {once: true});
+					});
+					return el;
+				}
+
 				root.appendChild(h('section', {className: 'stdout'}, [
 					h('h2', {}, ['StdOut']),
-					h('pre', {}, [job['stdout']])
+					live(h('pre'), el => stream(job['stdout'], el))
 				]));
 
 				root.appendChild(h('section', {className: 'stderr'}, [
 					h('h2', {}, ['StdErr']),
-					h('pre', {}, [job['stderr']])
+					live(h('pre'), el => stream(job['stderr'], el))
 				]));
+
+				function render(el) {
+					function update({detail}) {
+						const updated = h('dl', {}, Object.entries(detail.slurm).map(([key, value]) => {
+							return [
+								h('dt', {}, [key]),
+								h('dd', {}, [value])
+							];
+						}).flat(1));
+						el.parentNode.replaceChild(updated, el);
+					}
+
+					// Update now (and every time this page becomes visible)
+					update({detail:job});
+
+					// Update every time the job changes
+					job.addEventListener('update', update);
+
+					// but stop updating once this page is no longer visible.
+					return () => root.removeEventListener('update', update);
+				}
 
 				root.appendChild(h('section', {className: 'props'}, [
 					h('h2', {}, ['Properties']),
-					h('dl', {}, Object.entries(job.slurm).map(([key, value]) => {
-						return [
-							h('dt', {}, [key]),
-							h('dd', {}, [value])
-						];
-					}).flat(1))
+					live(h('dl'), render)
 				]));
 			})
 
