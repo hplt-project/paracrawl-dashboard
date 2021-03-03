@@ -3,6 +3,7 @@ import re
 import sys
 import os
 import subprocess
+import traceback
 from itertools import chain
 from datetime import datetime, timedelta
 from pprint import pprint
@@ -23,6 +24,9 @@ def match(pattern, obj):
 class Job(dict):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
+		if 'JobId' in self and not re.match(r'^\d+_\d+$', self['JobId']):
+			print("Job id {} is not an job array id?".format(self['JobId']), file=sys.stderr)
+			traceback.print_stack(file=sys.stderr)
 		if 'JobName' in self and self['JobName'].count('-') >= 2:
 			self.step, self.language, self.collection = self['JobName'].split('-', maxsplit=2)
 
@@ -42,14 +46,18 @@ class Collection:
 
 class Slurm:
 	def scheduled_jobs(self, since=None):
-		since = (datetime.now() - timedelta(days=7)).strftime('%Y%m%d%H%M%S')
+		if since is None:
+			since = (datetime.now() - timedelta(days=7))
+
+		since_timestamp = since.strftime('%Y%m%d%H%M%S')
+		
 		with open('.schedule-log') as fh:
 			lines = fh.readlines()
 		for line in lines:
 			timestamp, job_id, arguments = line.rstrip().split(' ', maxsplit=2)
 			if not job_id.isnumeric():
 				continue
-			if timestamp.isnumeric() and int(timestamp) >= int(since):
+			if timestamp.isnumeric() and timestamp >= since_timestamp:
 				yield from self.jobs_from_cli_args({'JobId': job_id, 'SubmitTime': timestamp}, arguments.split(' '))
 
 	def current_jobs(self):
@@ -66,13 +74,13 @@ class Slurm:
 			'TIME': 'Elapsed',
 		}
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
-		for line in lines[:]:
+		for line in lines[1:]:
 			job = dict(zip(headers, line.strip().split('|')))
 			if 'ArrayTaskId' in job and '-' in job['ArrayTaskId']:
 				for task_id in self.parse_job_arrays(job['ArrayTaskId']):
-					yield Job({**job, 'ArrayTaskId': task_id})
+					yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], task_id), 'ArrayTaskId': task_id})
 			else:
-				yield Job(job)
+				yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], job['ArrayTaskId'])})
 
 	def accounting_jobs(self, additional_args=[]):
 		output = subprocess.check_output(['sacct',
@@ -88,26 +96,45 @@ class Slurm:
 			'JobID': 'JobId'
 		}
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
-		for line in lines[:]:
+		for line in lines[1:]:
 			job = dict(zip(headers, line.strip().split('|')))
-			match = re.match(r'^(\d+)(_\[(\d+)-(\d+)\])$', job['JobId'])
+			match = re.match(r'^(\d+)_(?:\d+|\[(\d+)(?:-(\d+))?\])$', job['JobId'])
+
+			# job with suffix, like \d_\d.batch or .extern
 			if not match:
 				continue
 
-			if match[2]:
-				for task_id in range(int(match[3]), int(match[4]) + 1):
+			# It's a collapsed job array!
+			if match[3]:
+				for task_id in range(int(match[2]), int(match[3]) + 1):
 					yield Job({**job,
 						'JobId': '{}_{}'.format(match[1], task_id),
 						'ArrayJobId': match[1],
 						'ArrayTaskId': str(task_id)
 					})
+			elif match[2]:
+				yield Job({
+					**job,
+					'JobId': '{}_{}'.format(match[1], int(match[2])),
+					'ArrayJobId': match[1],
+					'ArrayTaskId': match[2]
+				})
 			else:
 				yield Job(job)
 
-	def jobs(self):
-		scheduled = {job['JobId']: job for job in self.scheduled_jobs()}
+	def jobs(self, since=None):
+		scheduled = {job['JobId']: job for job in self.scheduled_jobs(since=datetime(2021, 3, 1) if since is None else since)}
 
-		for job in chain(self.accounting_jobs(), self.current_jobs()):
+		array_job_ids = set(job['ArrayJobId'] for job in scheduled.values())
+
+		sources = []
+
+		if since:
+			sources.append(self.current_jobs())
+		else:
+			sources.append(self.accounting_jobs(['--jobs', ','.join(array_job_ids)]))
+
+		for job in chain(*sources):
 			try:
 				if job['JobId'] in scheduled:
 					scheduled[job['JobId']].update(job)
@@ -140,7 +167,11 @@ class Slurm:
 					break
 				else:
 					job[match.group('key')] = match.group('value')
-		return Job(job)
+		return Job({
+			**job,
+			'State': job['JobState'],
+			'JobId': '{}_{}'.format(job['ArrayJobId'], job['ArrayTaskId']) if 'ArrayJobId' in job else job['JobId']
+		})
 
 	def accounting_job(self, job_id):
 		return next(iter(self.accounting_jobs(['--job', job_id])), None)
@@ -248,22 +279,27 @@ def list_collections(request):
 
 
 @app.route('/jobs/')
-def list_jobs(request):
-	return send_json([
-		{
-			'id': job['JobId'],
-			'step': job.step,
-			'language': job.language,
-			'collection': job.collection,
-			'slurm': job, # the dict data
-			'stdout': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stdout')
-			          if 'ArrayTaskId' in job else None,
-			'stderr': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stderr')
-			          if 'ArrayTaskId' in job else None,
-			'link': app.url_for('show_job', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']))
-			        if 'ArrayTaskId' in job else None
-		} for job in slurm.jobs() if hasattr(job, 'language') and hasattr(job, 'collection')
-	])
+@app.route('/jobs/delta/<str:timestamp>', name='list_jobs_delta')
+def list_jobs(request, timestamp=None):
+	now = datetime.now()
+	return send_json({
+		'timestamp': now.isoformat(),
+		'jobs': [
+			{
+				'id': job['JobId'],
+				'step': job.step,
+				'language': job.language,
+				'collection': job.collection,
+				'slurm': job, # the dict data
+				'stdout': app.url_for('show_stream', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']), stream='stdout')
+				          if 'ArrayTaskId' in job else None,
+				'stderr': app.url_for('show_stream', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']), stream='stderr')
+				          if 'ArrayTaskId' in job else None,
+				'link': app.url_for('show_job', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']))
+				        if 'ArrayTaskId' in job else None
+			} for job in slurm.jobs(since=datetime.fromisoformat(timestamp) if timestamp is not None else None) if hasattr(job, 'language') and hasattr(job, 'collection')
+		]
+	})
 
 
 def tail(filename):

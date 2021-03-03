@@ -29,6 +29,12 @@
 				color: white;
 			}
 
+			#job-grid .job.pending,
+			#job-grid .progress-bar .pending {
+				background: #3cf;
+				color: white;
+			}
+
 			#job-grid .job.running,
 			#job-grid .progress-bar .running {
 				background: #fc0;
@@ -37,6 +43,12 @@
 			#job-grid .job.cancelled,
 			#job-grid .progress-bar .cancelled {
 				background: #333;
+				color: white;
+			}
+
+			#job-grid .job.timeout,
+			#job-grid .progress-bar .timeout {
+				background: #c33;
 				color: white;
 			}
 
@@ -86,7 +98,6 @@
 				width: 100%;
 				font: 4px/4px sans-serif;
 				background: white;
-				pointer-events: none;
 			}
 
 			.job-array .progress-bar > div {
@@ -94,9 +105,11 @@
 				height: 1em;
 			}
 
+			/*
 			.job-array:not(.running) .progress-bar {
 				display: none;
 			}
+			*/
 
 			.collapsible-handle {
 				cursor: pointer;
@@ -132,36 +145,55 @@
 					this._index = new Map();
 				}
 
+				add(item) {
+					const key = this._keyFn(item);
+					
+					if (this._index.has(key)) {
+						const current = this._index.get(key);
+						Object.assign(current, item);
+						current.dispatchEvent(new CustomEvent('update', {detail: current}));
+					} else {
+						const current = new EventTarget();
+						this._index.set(key, current);
+						Object.assign(current, item);
+						this.dispatchEvent(new CustomEvent('add', {detail: current}));
+					}
+				}
+
+				delete(item) {
+					this._index.delete(this._keyFn(item));
+					current.dispatchEvent(new CustomEvent('delete', {detail: item}))
+				}
+
 				update(items) {
+					items.forEach(item => this.add(item));
+				} 
+
+				sync(items) {
 					const visited = new Set();
 
 					items.forEach(item => {
-						const key = this._keyFn(item);
-						visited.add(key);
-
-						if (this._index.has(key)) {
-							const current = this._index.get(key);
-							Object.assign(current, item);
-							current.dispatchEvent(new CustomEvent('update', {detail: current}));
-						} else {
-							const current = new EventTarget();
-							this._index.set(key, current);
-							Object.assign(current, item);
-							this.dispatchEvent(new CustomEvent('add', {detail: current}));
-						}
+						visited.add(this._keyFn(item));
+						this.add(item);
 					});
 
-					this._index.forEach((current, key, map) => {
-						if (!visited.has(key)) {
-							map.delete(key);
-							current.dispatchEvent(new CustomEvent('delete', {detail: current}))
-						}
+					this._index.forEach((item, key) => {
+						if (!visited.has(this._keyFn(key)))
+							this.delete(item);
 					});
 				}
 
 				find(key) {
 					return this._index.get(key);
-				} 
+				}
+
+				forEach(fn) {
+					this._index.forEach(fn);
+				}
+
+				get length() {
+					return this._index.size;
+				}
 			}
 
 			class Interval extends EventTarget {
@@ -173,11 +205,13 @@
 				}
 
 				start() {
+					clearTimeout(this.timeout);
 					this.dispatchEvent(new CustomEvent('start'));
 					this.timeout = setTimeout(this.trigger.bind(this), this.interval);
 				}
 
 				startImmediate() {
+					clearTimeout(this.timeout);
 					this.dispatchEvent(new CustomEvent('start'));
 					this.timeout = setTimeout(this.trigger.bind(this), 0);
 				}
@@ -233,10 +267,15 @@
 					const state = ++this.serial;
 					const page = h('div', {className: 'page'}, []);
 
+					// Fill the page (or hopefully just async start filling it)
+					const rv = route.callback(page, {url, match, ...match.groups});
+
+					// Make page visible
 					this.states[state] = page;
 					this.setState(state);
 
-					return route.callback(page, {url, match});
+					// Return possibly the promise of the page callback
+					return rv;
 				}
 
 				async dispatch(url) {
@@ -248,6 +287,14 @@
 				setState(state) {
 					this.state = state;
 					this.render();
+
+					// Clean up old entries
+					Object.entries(this.states).forEach(([state, page]) => {
+						if (state > this.state) {
+							page.dispatchEvent(new CustomEvent('destroy'));
+							delete this.states[state];
+						}
+					});
 				}
 
 				render() {
@@ -324,6 +371,40 @@
 				return await response.json();
 			}
 
+			/**
+			 * Streams text response to textContent of an element. Think tail -f for
+			 * http requests.
+			 * Returns function that when called stops streaming.
+			 */
+			function stream(url, el) {
+				const abort = new AbortController();
+
+				fetch(url, {signal: abort.signal}).then(async response => {
+					const reader = response.body.getReader();
+
+					el.textContent = '';
+					const decoder = new TextDecoder("utf-8");
+
+					try {
+						while (true) {
+							const {done, value} = await reader.read();
+
+							if (done)
+								break;
+
+							el.textContent += decoder.decode(value);
+						}
+					} catch (e) {
+						if (e.name !== 'AbortError')
+							throw e;
+					};
+				});
+
+				return () => {
+					abort.abort();
+				}
+			}
+
 			function renderGrid(table, collections) {
 				const languages = Array.from(collections.reduce((languages, collection) => {
 					collection.languages.forEach(language => languages.add(language))
@@ -376,9 +457,11 @@
 				const list = h('ol', {}, []);
 				const progress = h('span', {className: 'progress'});
 				const bar = h('div', {className: 'progress-bar'}, [
-					h('div', {className: 'running', style: {width: 'var(--running)'}}),
-					h('div', {className: 'completed', style: {width: 'var(--completed)'}}),
-					h('div', {className: 'cancelled', style: {width: 'var(--cancelled)'}}),
+					h('div', {className: 'pending', style: {width: 'var(--pending)'}, title: 'Pending'}),
+					h('div', {className: 'running', style: {width: 'var(--running)'}, title: 'Running'}),
+					h('div', {className: 'completed', style: {width: 'var(--completed)'}, title: 'Completed'}),
+					h('div', {className: 'cancelled', style: {width: 'var(--cancelled)'}, title: 'Cancelled'}),
+					h('div', {className: 'timeout', style: {width: 'var(--timeout)'}, title: 'Timeout'}),
 				]);
 
 				cell.td.appendChild(h('div', {className: 'job-array collapsible collapsed'}, [
@@ -392,9 +475,11 @@
 				list.update = () => {
 					const counts = {
 						'job': 0,
+						'pending': 0,
 						'running': 0,
 						'completed': 0,
-						'cancelled': 0
+						'cancelled': 0,
+						'timeout': 0,
 					};
 
 					list.querySelectorAll('.job').forEach(el => {
@@ -419,7 +504,7 @@
 				return list;
 			}
 
-			function addJob(grid, job) {
+			function addJobToGrid(grid, job) {
 				const id = job.slurm['ArrayJobId'] || job.slurm['JobId'];
 
 				const cell = grid[job.collection][job.language];
@@ -439,8 +524,10 @@
 					link.dataset.slurm = JSON.stringify(job.slurm);
 					link.title = `Elapsed: ${job.slurm['Elapsed']}`;
 
+					link.classList.toggle('pending',   'State' in job.slurm && job.slurm['State'] == 'PENDING');
 					link.classList.toggle('running',   'State' in job.slurm && job.slurm['State'] == 'RUNNING');
 					link.classList.toggle('completed', 'State' in job.slurm && job.slurm['State'] == 'COMPLETED');
+					link.classList.toggle('timeout',   'State' in job.slurm && job.slurm['State'] == 'TIMEOUT');
 					link.classList.toggle('cancelled', 'State' in job.slurm && job.slurm['State'].match(/^CANCELLED/));
 					list.update(); // Update list running status
 				};
@@ -456,6 +543,20 @@
 
 			const router = new Router();
 
+			const index = new List(job => job.id);
+
+			let lastUpdate = '';
+			
+			// After that prefer just the queue updates
+			const updater = new Interval(async () => {
+				return fetchJSON(lastUpdate ? '/jobs/delta/' + lastUpdate : '/jobs/').then(delta => {
+					index.update(delta.jobs);
+					lastUpdate = delta.timestamp;	
+				});
+			}, 60 * 1000);
+
+			updater.startImmediate();
+
 			router.add(/^\/$/, async (root) => {
 				const collections = await fetchJSON('/collections/');
 				collections.sort((left, right) => left.name.localeCompare(right.name));
@@ -464,57 +565,33 @@
 				root.appendChild(table);
 
 				const grid = renderGrid(table, collections);
+				index.forEach(job => addJobToGrid(grid, job))
 				
-				const index = new List(job => job.id);
-				index.addEventListener('add', e => addJob(grid, e.detail));
-				
-				const update = async () => {
-					const jobs = await fetchJSON('/jobs/');
-					index.update(jobs);
-				}
+				// When new jobs are found, add them
+				const addJob = e => addJobToGrid(grid, e.detail);
+				index.addEventListener('add', addJob);
 
-				const updater = new Interval(update, 30000);
-				root.addEventListener('hide', e => updater.stop());
-				root.addEventListener('show', e => updater.startImmediate());
+				// Stop listening for new jobs when this page gets scrapped
+				root.addEventListener('destroy', e => {
+					index.removeEventListener('add', addJob);
+				}, {once: true});
+
+				// Refresh now
+				// updater.startImmediate();
 				
-				updater.startImmediate(); // We missed the show event for the first load
+				// // Refresh when page becomes visible again
+				// root.addEventListener('show', e => {
+				// 	updater.startImmediate();
+				// });
 			});
 
-			function stream(url, el) {
-				const abort = new AbortController();
-
-				fetch(url, {signal: abort.signal}).then(async response => {
-					const reader = response.body.getReader();
-
-					el.textContent = '';
-					const decoder = new TextDecoder("utf-8");
-
-					try {
-						while (true) {
-							const {done, value} = await reader.read();
-
-							if (done)
-								break;
-
-							el.textContent += decoder.decode(value);
-						}
-					} catch (e) {
-						if (e.name !== 'AbortError')
-							throw e;
-					};
-				});
-
-				return () => {
-					abort.abort();
-				}
-			}
-
-			router.add(/^\/jobs\/(?<job_id>\d+)\/(?<job_array_id>\d+)$/, (root, {url}) => {
+			router.add(/^\/jobs\/(?<job_id>\d+)\/(?<job_array_id>\d+)$/, (root, {url, job_id, job_array_id}) => {
 				const job = index.find(`${job_id}_${job_array_id}`)
 
-				fetch(url)\
-					.then(response => response.json())\
-					.then(index.update(job));
+				// Fetch more details about this job
+				fetch(url)
+					.then(response => response.json())
+					.then(job => index.add(job));
 
 				root.appendChild(h('h1', {}, [job.slurm['JobId']]));
 
@@ -545,6 +622,7 @@
 							];
 						}).flat(1));
 						el.parentNode.replaceChild(updated, el);
+						el = updated;
 					}
 
 					// Update now (and every time this page becomes visible)
