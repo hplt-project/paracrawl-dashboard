@@ -13,6 +13,7 @@ from collections import defaultdict
 from itertools import chain
 from urllib.parse import quote_plus, unquote_plus
 import socket # For gethostbyaddr()
+import select
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler, HTTPStatus, test as _http_server_test
 import shutil
 
@@ -68,7 +69,24 @@ class FileResponse(Response):
 
 	def write(self, handler):
 		self._write_headers(handler)
-		shutil.copyfileobj(self.fh, handler.wfile)
+		os.set_blocking(self.fh.fileno(), False)
+		
+		poller = select.poll()
+		poller.register(self.fh, select.POLLIN)
+		poller.register(handler.wfile, select.POLLIN)
+		while True:
+			for fd, event in poller.poll():
+				# if the downstream socket has "incoming data"
+				# it means the connection closed.
+				if fd == handler.wfile.fileno():
+					return
+
+				data = self.fh.read()
+				if not data:
+					return
+
+				handler.wfile.write(data)
+				handler.wfile.flush()
 
 	def __del__(self):
 		self.fh.close()
