@@ -325,8 +325,12 @@
 
 			function listen(event, selector, callback) {
 				document.body.addEventListener(event, e => {
-					if (e.target.matches(selector))
-						callback(e);
+					let el = e.target;
+					while (el && el !== document) {
+						if (el.matches(selector))
+							return callback(el, e);
+						el = el.parentNode;
+					};
 				});
 			}
 
@@ -641,12 +645,12 @@
 				]));
 			})
 
-			listen('click', 'a.job', async (e) => {
+			listen('click', 'a.job', async (el, e) => {
 				try {
-					router.dispatch(e.target.pathname);
+					router.dispatch(el.pathname);
 					e.preventDefault();
-				} catch (e) {
-					console.error(e);
+				} catch (err) {
+					console.error(err);
 				}
 			});
 
