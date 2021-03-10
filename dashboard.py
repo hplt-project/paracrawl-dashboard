@@ -270,6 +270,14 @@ def index(request):
 	return send_file(os.path.join(os.path.dirname(__file__), 'dashboard.html'))
 
 
+@app.route('/<str:filename>.html')
+def index(request, filename):
+	path = os.path.join(os.path.dirname(__file__), '{}.html'.format(filename))
+	if not os.path.exists(path):
+		return Response("File not found: {}".format(path), status_code=404)
+	return send_file(path)
+
+
 @app.route('/collections/')
 def list_collections(request):
 	return send_json([
