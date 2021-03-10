@@ -150,12 +150,12 @@
 					
 					if (this._index.has(key)) {
 						const current = this._index.get(key);
-						Object.assign(current, item);
+						assign(current, item);
 						current.dispatchEvent(new CustomEvent('update', {detail: current}));
 					} else {
 						const current = new EventTarget();
 						this._index.set(key, current);
-						Object.assign(current, item);
+						assign(current, item);
 						this.dispatchEvent(new CustomEvent('add', {detail: current}));
 					}
 				}
