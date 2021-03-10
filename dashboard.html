@@ -46,10 +46,8 @@
 				color: white;
 			}
 
-			#job-grid .job.timeout,
-			#job-grid .progress-bar .timeout,
-			#job-grid .job.out-of-memory,
-			#job-grid .progress-bar .out-of-memory {
+			#job-grid .job.failed,
+			#job-grid .progress-bar .failed {
 				background: #c33;
 				color: white;
 			}
@@ -463,8 +461,7 @@
 					h('div', {className: 'running', style: {width: 'var(--running)'}, title: 'Running'}),
 					h('div', {className: 'completed', style: {width: 'var(--completed)'}, title: 'Completed'}),
 					h('div', {className: 'cancelled', style: {width: 'var(--cancelled)'}, title: 'Cancelled'}),
-					h('div', {className: 'timeout', style: {width: 'var(--timeout)'}, title: 'Timeout'}),
-					h('div', {className: 'out-of-memory', style: {width: 'var(--out-of-memory)'}, title: 'Out-of-memory'}),
+					h('div', {className: 'failed', style: {width: 'var(--failed)'}, title: 'Failed'}),
 				]);
 
 				cell.td.appendChild(h('div', {className: 'job-array collapsible collapsed'}, [
@@ -482,8 +479,7 @@
 						'running': 0,
 						'completed': 0,
 						'cancelled': 0,
-						'timeout': 0,
-						'out-of-memory': 0
+						'failed': 0
 					};
 
 					list.querySelectorAll('.job').forEach(el => {
@@ -531,9 +527,8 @@
 					link.classList.toggle('pending',       'State' in job.slurm && job.slurm['State'] == 'PENDING');
 					link.classList.toggle('running',       'State' in job.slurm && job.slurm['State'] == 'RUNNING');
 					link.classList.toggle('completed',     'State' in job.slurm && job.slurm['State'] == 'COMPLETED');
-					link.classList.toggle('timeout',       'State' in job.slurm && job.slurm['State'] == 'TIMEOUT');
-					link.classList.toggle('out-of-memory', 'State' in job.slurm && job.slurm['State'] == 'OUT_OF_MEMORY');
 					link.classList.toggle('cancelled',     'State' in job.slurm && job.slurm['State'].match(/^CANCELLED/));
+					link.classList.toggle('failed',        'State' in job.slurm && job.slurm['State'].match(/^TIMEOUT|FAILED|OUT_OF_MEMORY$/));
 					list.update(); // Update list running status
 				};
 
