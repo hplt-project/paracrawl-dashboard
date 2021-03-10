@@ -355,12 +355,12 @@
 			}
 
 			function listen(event, selector, callback) {
-				document.body.addEventListener(event, e => {
+				document.body.addEventListener(event, function(e) {
 					let el = e.target;
-					while (el && el !== document) {
+					while(el) {
 						if (el.matches(selector))
 							return callback(el, e);
-						el = el.parentNode;
+						el = el.parentElement;
 					};
 				});
 			}
@@ -406,28 +406,26 @@
 				return await response.json();
 			}
 
+			/**
+			 * fetch() as an async generator, yielding chunks of content as they come in
+			 */
 			function stream(url) {
 				const abort = new AbortController();
 
 				return {
-					[Symbol.asyncIterator]() {
+					async *[Symbol.asyncIterator]() {
 						const decoder = new TextDecoder("utf-8");
 
-						const reader = new Promise((accept, reject) => {
-							fetch(url, {signal: abort.signal}).then(async response => {
-								accept(response.body.getReader());
-							});
-						});
+						const response = await fetch(url, {signal: abort.signal});
+						const reader = response.body.getReader();
+						
+						while (true) {
+							const {done, value} = await reader.read();
 
-						return {
-							async next() {
-								const {done, value} = await (await reader).read();
-
-								if (done)
-									return {done: true};
-								else
-									return {done: false, value: decoder.decode(value)};
-							}
+							if (done)
+								break;
+							
+							yield decoder.decode(value);
 						}
 					},
 					abort() {
@@ -436,36 +434,40 @@
 				}
 			}
 
-			function lines(generator) {
-				return {
-					[Symbol.asyncIterator]() {
-						const iterator = generator[Symbol.asyncIterator]();
-						let buffer = '';
+			/**
+			 * Generator that wraps another async iterator and yield lines (instead
+			 * of chunks as stream() does)
+			 */
+			async function* lines(generator) {
+				const iterator = generator[Symbol.asyncIterator]();
+				let buffer = '';
 
-						return {
-							async next() {
-								while (true) {
-									const pos = buffer.indexOf('\n');
+				while (true) {
+					const pos = buffer.indexOf('\n');
 
-									// We have a full line in the buffer
-									if (pos >= 0) {
-										const value = buffer.substr(0, pos);
-										buffer = buffer.substr(pos+1);
-										return {done: false, value};
-									}
-
-									// We still have data to read
-									const {done, value} = await iterator.next();
-
-									if (done)
-										return {done: true};
-
-									buffer += value; // and we use the value next iteration
-								}
-							}
-						};
+					// We have a full line in the buffer
+					if (pos >= 0) {
+						const value = buffer.substr(0, pos);
+						buffer = buffer.substr(pos+1);
+						yield value;
+						continue;
 					}
-				};
+
+					// We still have data to read?
+					const {done, value} = await iterator.next();
+
+					// Yes! Fill buffer and start over
+					if (!done) {
+						buffer += value; // and we use the value next iteration
+						continue;
+					}
+
+					// Nope, we're out of data. Yield remaining buffer as a last line.
+					if (buffer)
+						yield buffer;
+
+					break;
+				}
 			}
 
 			function streamToElement(url, root) {
