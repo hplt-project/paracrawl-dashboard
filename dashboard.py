@@ -222,6 +222,8 @@ class Slurm:
 				job['TimeLimit'] = next(it)
 			elif arg == '--cpus-per-task':
 				job['NumCPUs'] = next(it)
+			elif arg == '--mem-per-cpu':
+				next(it)
 			elif arg == '-e':
 				job['StdErr'] = next(it)
 			elif arg == '-o':
