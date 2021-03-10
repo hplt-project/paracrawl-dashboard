@@ -130,6 +130,37 @@
 				transform: rotate(90deg) translateY(-25%);
 			}
 
+			pre .line {
+				white-space: pre-wrap;
+			}
+
+			pre .marker {
+				margin-right: 1em;
+  			color: #a33;
+			}
+
+			pre .line[data-collapsed] {
+				white-space: nowrap;
+				overflow: hidden;
+				display: flex;
+			}
+
+			pre .line[data-collapsed] .marker {
+				flex: 0 0 200px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				direction: rtl;
+  			text-align: left;
+			}
+
+			pre .line[data-collapsed] .message {
+				flex: 1 1 auto;
+				white-space: pre-line;
+				height: 1.2em;
+				white-space: nowrap;
+				text-overflow: ellipsis;
+				overflow: hidden;
+			}
 		</style>
 	</head>
 	<body>
@@ -375,38 +406,95 @@
 				return await response.json();
 			}
 
-			/**
-			 * Streams text response to textContent of an element. Think tail -f for
-			 * http requests.
-			 * Returns function that when called stops streaming.
-			 */
-			function stream(url, el) {
+			function stream(url) {
 				const abort = new AbortController();
 
-				fetch(url, {signal: abort.signal}).then(async response => {
-					const reader = response.body.getReader();
+				return {
+					[Symbol.asyncIterator]() {
+						const decoder = new TextDecoder("utf-8");
 
-					el.textContent = '';
-					const decoder = new TextDecoder("utf-8");
+						const reader = new Promise((accept, reject) => {
+							fetch(url, {signal: abort.signal}).then(async response => {
+								accept(response.body.getReader());
+							});
+						});
 
+						return {
+							async next() {
+								const {done, value} = await (await reader).read();
+
+								if (done)
+									return {done: true};
+								else
+									return {done: false, value: decoder.decode(value)};
+							}
+						}
+					},
+					abort() {
+						abort.abort();
+					}
+				}
+			}
+
+			function lines(generator) {
+				return {
+					[Symbol.asyncIterator]() {
+						const iterator = generator[Symbol.asyncIterator]();
+						let buffer = '';
+
+						return {
+							async next() {
+								while (true) {
+									const pos = buffer.indexOf('\n');
+
+									// We have a full line in the buffer
+									if (pos >= 0) {
+										const value = buffer.substr(0, pos);
+										buffer = buffer.substr(pos+1);
+										return {done: false, value};
+									}
+
+									// We still have data to read
+									const {done, value} = await iterator.next();
+
+									if (done)
+										return {done: true};
+
+									buffer += value; // and we use the value next iteration
+								}
+							}
+						};
+					}
+				};
+			}
+
+			function streamToElement(url, root) {
+				root.innerHTML = ''; // clear
+
+				const data = stream(url);
+				
+				async function render() {
 					try {
-						while (true) {
-							const {done, value} = await reader.read();
-
-							if (done)
-								break;
-
-							el.textContent += decoder.decode(value);
+						for await (let line of lines(data)) {
+							const match = line.match(/^(\[.+?\])\t(.+?)$/);
+							if (match) {
+								root.appendChild(h('div', {className: 'line', dataset: {collapsible: true, collapsed: true}}, [
+									h('span', {'className': 'marker'}, [match[1]]),
+									h('span', {'className': 'message'}, [match[2]])
+								]));
+							} else {
+								root.appendChild(h('div', {className: 'line'}, [line]));
+							}
 						}
 					} catch (e) {
 						if (e.name !== 'AbortError')
 							throw e;
-					};
-				});
+					}
+				};
 
-				return () => {
-					abort.abort();
-				}
+				render(); // Just let it go!
+
+				return {abort: data.abort};
 			}
 
 			function renderGrid(table, collections) {
@@ -609,12 +697,12 @@
 
 				root.appendChild(h('section', {className: 'stdout'}, [
 					h('h2', {}, ['StdOut']),
-					live(h('pre'), el => stream(job['stdout'], el))
+					live(h('pre'), el => streamToElement(job['stdout'], el))
 				]));
 
 				root.appendChild(h('section', {className: 'stderr'}, [
 					h('h2', {}, ['StdErr']),
-					live(h('pre'), el => stream(job['stderr'], el))
+					live(h('pre'), el => streamToElement(job['stderr'], el))
 				]));
 
 				function render(el) {
@@ -660,8 +748,15 @@
 				return el;
 			}
 
-			listen('click', '.collapsible .collapsible-handle', e => {
-				findParent(e.target, '.collapsible').classList.toggle('collapsed');
+			listen('click', '.collapsible .collapsible-handle', el => {
+				findParent(el, '.collapsible').classList.toggle('collapsed');
+			});
+
+			listen('click', '[data-collapsible]', el => {
+				if (el.dataset.collapsed)
+					delete el.dataset.collapsed;
+				else
+					el.dataset.collapsed = 'true';
 			});
 
 			router.dispatch(document.location.pathname);
