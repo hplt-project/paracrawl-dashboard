@@ -750,15 +750,29 @@
 				return el;
 			}
 
+			// the collapsible lists
 			listen('click', '.collapsible .collapsible-handle', el => {
 				findParent(el, '.collapsible').classList.toggle('collapsed');
 			});
 
-			listen('click', '[data-collapsible]', el => {
-				if (el.dataset.collapsed)
-					delete el.dataset.collapsed;
-				else
-					el.dataset.collapsed = 'true';
+			// the collapsed rows in the log: only collapse/contract when cicking,
+			// not when selecting text. (better ui would be a button, but that
+			// button would probably be small.)
+			listen('mousedown', '[data-collapsible]', (el, e) => {
+				let moved = false;
+
+				el.addEventListener('mousemove', e => {
+					moved = true;
+				}, {once: true});
+
+				el.addEventListener('mouseup', e => {
+					if (!moved) {
+						if (el.dataset.collapsed)
+							delete el.dataset.collapsed;
+						else
+							el.dataset.collapsed = 'true';
+					}
+				}, {once: true});
 			});
 
 			router.dispatch(document.location.pathname);
