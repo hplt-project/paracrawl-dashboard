@@ -298,7 +298,12 @@ class JSONEncoder(json.JSONEncoder):
 
 
 def send_json(data, **kwargs):
-	return Response(json.dumps(data, cls=JSONEncoder), **kwargs)
+	data = json.dumps(data, cls=JSONEncoder)
+	headers = kwargs.get('headers', {})
+	headers['Content-Type'] = 'application/json'
+	headers['Content-Length'] = len(data)
+	kwargs['headers'] = headers
+	return Response(data, **kwargs)
 
 
 def main(app):
