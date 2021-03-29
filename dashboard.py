@@ -200,30 +200,41 @@ class Slurm:
 			else:
 				yield int(job_array)
 
+	def normalize_cli_args(sel, args):
+		for arg in args:
+			match = re.match(r'^(--.+?)=(.+?)$', arg)
+			if match:
+				yield match.group(1)
+				yield match.group(2)
+			else:
+				yield arg
+
 	def jobs_from_cli_args(self, job, args):
-		it = iter(args)
+		it = iter(self.normalize_cli_args(args))
 		job_array = None
 		for arg in it:
-			if arg in {'--parsable', '--verbose'}:
+			if arg in {'--parsable', '--verbose', '--exclusive'}: # options we ignore
 				pass
-			elif arg == '--dependency':
-				job['Dependency'] = next(it)
-			elif arg == '--ntasks':
-				job['NumTasks'] = next(it)
-			elif arg == '--nodes':
-				job['NumNodes'] = next(it)
-			elif arg == '--export':
+			elif arg in {'--nice', '--mem-per-cpu', '--export'}: # options with arguments we ignore
 				next(it)
+			elif arg in {'--dependency', '-d'}:
+				job['Dependency'] = next(it)
+			elif arg in {'--ntasks', '-n'}:
+				job['NumTasks'] = next(it)
+			elif arg in {'--nodes', '-N'}:
+				job['NumNodes'] = next(it)
+			elif arg in {'--account', '-A'}:
+				job['Account'] = next(it)
+			elif arg in {'--partition', '-p'}:
+				job['Partition'] = next(it)
 			elif arg == '-J':
 				job['JobName'] = next(it)
-			elif arg == '-a':
+			elif arg in {'-a', '--array'}:
 				job_array = next(it)
 			elif arg == '--time':
 				job['TimeLimit'] = next(it)
 			elif arg == '--cpus-per-task':
 				job['NumCPUs'] = next(it)
-			elif arg == '--mem-per-cpu':
-				next(it)
 			elif arg == '-e':
 				job['StdErr'] = next(it)
 			elif arg == '-o':
@@ -242,8 +253,8 @@ class Slurm:
 					'JobId': '{}_{}'.format(job['JobId'], array_task_id),
 					'ArrayJobId': job['JobId'],
 					'ArrayTaskId': str(array_task_id),
-					'StdOut': job['StdOut'].replace('%A', job['JobId']).replace('%a', str(array_task_id)),
-					'StdErr': job['StdErr'].replace('%A', job['JobId']).replace('%a', str(array_task_id)),
+					'StdOut': job.get('StdOut', '').replace('%A', job['JobId']).replace('%a', str(array_task_id)),
+					'StdErr': job.get('StdErr', '').replace('%A', job['JobId']).replace('%a', str(array_task_id)),
 				})
 
 
