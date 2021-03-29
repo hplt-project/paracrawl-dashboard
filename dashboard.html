@@ -52,8 +52,26 @@
 				color: white;
 			}
 
+			#job-grid .job.hold,
+			#job-grid .progress-bar .hold {
+				background: #c3c;
+				color: white;
+			}
+
+			#job-grid thead th {
+				position: sticky;
+				top: 0;
+				background: white;
+			}
+
 			#job-grid th, #job-grid td {
 				vertical-align: top;
+			}
+
+			#job-grid th:empty::after {
+				content: 'n/a';
+				color: #ccc;
+				font-weight: normal;
 			}
 
 			#job-grid tr:nth-child(even) {
@@ -98,18 +116,23 @@
 				width: 100%;
 				font: 4px/4px sans-serif;
 				background: white;
+				white-space: nowrap;
+				overflow: hidden;
 			}
 
 			.job-array .progress-bar > div {
 				display: inline-block;
 				height: 1em;
+				min-width: 1em;
 			}
 
-			/*
-			.job-array:not(.running) .progress-bar {
+			.job-array .progress-bar > div[hidden] {
 				display: none;
 			}
-			*/
+
+			.job-array.completed .progress-bar {
+				opacity: 0.4;
+			}
 
 			.collapsible-handle {
 				cursor: pointer;
@@ -165,6 +188,9 @@
 	</head>
 	<body>
 		<script>
+			const UNSPECIFIED_LANGUAGE = Symbol('UNSPECIFIED_LANGUAGE');
+			const UNSPECIFIED_COLLECTION = Symbol('UNSPECIFIED_COLLECTION');
+
 			function identity(x) {
 				return x;
 			}
@@ -496,7 +522,7 @@
 
 				render(); // Just let it go!
 
-				return {abort: data.abort};
+				return data.abort; // Return the stop function
 			}
 
 			function renderGrid(table, collections) {
@@ -505,10 +531,23 @@
 					return languages
 				}, new Set())).sort();
 
+				// Add the non-language-specific jobs at the end
+				languages.push(UNSPECIFIED_LANGUAGE);
+
+				collections = [
+					...collections,
+					{
+						name: UNSPECIFIED_COLLECTION,
+						languages: Array.from(languages)
+					}
+				];
+
 				table.appendChild(h('thead', {}, [
 					h('tr', {}, [
 						h('td'),
-						...collections.map(collection => h('th', {}, [collection.name]))
+						...collections.map(collection => h('th', {}, [
+							collection.name !== UNSPECIFIED_COLLECTION ? collection.name : ''
+						]))
 					])
 				]));
 
@@ -516,10 +555,10 @@
 
 				table.appendChild(h('tbody', {},
 					languages.map(language => h('tr', {}, [
-						h('th', {}, [language]),
+						h('th', {}, [language !== UNSPECIFIED_LANGUAGE ? language : '']),
 						...collections.map(collection => {
 							const td = h('td', {}, []);
-							if (!collection.languages.includes(language))
+							if (!collection.languages.includes(language) && language !== UNSPECIFIED_LANGUAGE)
 								td.classList.add('unavailable');
 							grid[collection.name][language] = {td};
 							return td;
@@ -551,11 +590,12 @@
 				const list = h('ol', {}, []);
 				const progress = h('span', {className: 'progress'});
 				const bar = h('div', {className: 'progress-bar'}, [
-					h('div', {className: 'pending', style: {width: 'var(--pending)'}, title: 'Pending'}),
-					h('div', {className: 'running', style: {width: 'var(--running)'}, title: 'Running'}),
-					h('div', {className: 'completed', style: {width: 'var(--completed)'}, title: 'Completed'}),
-					h('div', {className: 'cancelled', style: {width: 'var(--cancelled)'}, title: 'Cancelled'}),
-					h('div', {className: 'failed', style: {width: 'var(--failed)'}, title: 'Failed'}),
+					h('div', { className: 'failed',     title: 'Failed' }),
+					h('div', { className: 'completed',  title: 'Completed' }),
+					h('div', { className: 'running',    title: 'Running' }),
+					h('div', { className: 'pending',    title: 'Pending' }),
+					h('div', { className: 'hold',       title: 'Hold' }),
+					h('div', { className: 'cancelled',  title: 'Cancelled'}),
 				]);
 
 				cell.td.appendChild(h('div', {className: 'job-array collapsible collapsed'}, [
@@ -570,10 +610,11 @@
 					const counts = {
 						'job': 0,
 						'pending': 0,
+						'hold': 0,
 						'running': 0,
 						'completed': 0,
 						'cancelled': 0,
-						'failed': 0
+						'failed': 0,
 					};
 
 					list.querySelectorAll('.job').forEach(el => {
@@ -583,13 +624,20 @@
 						})
 					});
 
-					// Set each state as a percentage variable for css
+					// Update each bar
 					Object.keys(counts).forEach(className => {
-						list.parentNode.style.setProperty(`--${className}`, formatPercentage(counts[className], counts['job']));
+						if (className == 'job')
+							return; // we don't have a bar for "job"
+						const bar = list.parentNode.querySelector(`.progress-bar .${className}`);
+						bar.style.width = formatPercentage(counts[className], counts['job']);
+						bar.hidden = counts[className] == 0;
 					});
 					
 					// Mark the whole list as running if there is something running
 					list.parentNode.classList.toggle('running', counts['running'] > 0);
+
+					// Mark the whole list as completed if all jobs are completed
+					list.parentNode.classList.toggle('completed', counts['completed'] == counts['job']);
 
 					// Update the little progress indicator text
 					progress.textContent = `${counts['running']}/${counts['job']}`;
@@ -601,7 +649,12 @@
 			function addJobToGrid(grid, job) {
 				const id = job.slurm['ArrayJobId'] || job.slurm['JobId'];
 
-				const cell = grid[job.collection][job.language];
+				const cell = grid[job.collection || UNSPECIFIED_COLLECTION][job.language || UNSPECIFIED_LANGUAGE];
+
+				if (!cell) {
+					console.warn("No cell for ", job.collection, job.language);
+					return;
+				}
 
 				if (!('lists' in cell))
 					cell.lists = {};
@@ -615,10 +668,10 @@
 					[formatJob(job)]));
 
 				const render = () => {
-					link.dataset.slurm = JSON.stringify(job.slurm);
 					link.title = `Elapsed: ${job.slurm['Elapsed']}`;
 
-					link.classList.toggle('pending',       'State' in job.slurm && job.slurm['State'] == 'PENDING');
+					link.classList.toggle('pending',       'State' in job.slurm && job.slurm['State'] == 'PENDING' && job.slurm['Reason'] != 'JobHeldUser');
+					link.classList.toggle('hold',          'State' in job.slurm && job.slurm['State'] == 'PENDING' && job.slurm['Reason'] == 'JobHeldUser');
 					link.classList.toggle('running',       'State' in job.slurm && job.slurm['State'] == 'RUNNING');
 					link.classList.toggle('completed',     'State' in job.slurm && job.slurm['State'] == 'COMPLETED');
 					link.classList.toggle('cancelled',     'State' in job.slurm && job.slurm['State'].match(/^CANCELLED/));
@@ -655,6 +708,11 @@
 				const collections = await fetchJSON('/collections/');
 				collections.sort((left, right) => left.name.localeCompare(right.name));
 
+				// const since = h('input', {type: 'datetime-local'});
+				// root.appendChild(h('div', {className: 'controls'}, [
+				// 	h('label', {}, ['Only show jobs since:', since])
+				// ]));
+
 				const table = h('table', {'id': 'job-grid'});
 				root.appendChild(table);
 
@@ -669,6 +727,10 @@
 				root.addEventListener('destroy', e => {
 					index.removeEventListener('add', addJob);
 				}, {once: true});
+
+				// since.addEventListener('input', e => {
+
+				// });
 
 				// Refresh now
 				// updater.startImmediate();
