@@ -10,7 +10,6 @@ from pprint import pprint
 from web import Application, Response, FileResponse, main, send_file, send_json
 
 
-
 def match(pattern, obj):
 	"""See whether pattern is a subset of obj. Not-recursive."""
 	for key, val in pattern.items():
@@ -24,11 +23,14 @@ def match(pattern, obj):
 class Job(dict):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		if 'JobId' in self and not re.match(r'^\d+_\d+$', self['JobId']):
-			print("Job id {} is not an job array id?".format(self['JobId']), file=sys.stderr)
-			traceback.print_stack(file=sys.stderr)
-		if 'JobName' in self and self['JobName'].count('-') >= 2:
-			self.step, self.language, self.collection = self['JobName'].split('-', maxsplit=2)
+		
+		if 'JobName' in self:
+			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|clean)-([a-z]{2})-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+				self.step, self.language, self.collection = match[1], match[2], match[3]
+			elif match := re.match(r'^(reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered)-([a-z]{2})$', self['JobName']):
+				self.step, self.language, self.collection = match[1], match[2], None
+			elif match := re.match(r'^(warc2text)-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+				self.step, self.language, self.collection = match[1], None, match[2]
 
 
 class Collection:
@@ -47,18 +49,18 @@ class Collection:
 class Slurm:
 	def scheduled_jobs(self, since=None):
 		if since is None:
-			since = (datetime.now() - timedelta(days=7))
+			since = datetime(1970, 1, 1)
 
 		since_timestamp = since.strftime('%Y%m%d%H%M%S')
 		
 		with open('.schedule-log') as fh:
 			lines = fh.readlines()
 		for line in lines:
-			timestamp, job_id, arguments = line.rstrip().split(' ', maxsplit=2)
-			if not job_id.isnumeric():
+			timestamp, line_job_id, arguments = line.rstrip().split(' ', maxsplit=2)
+			if not line_job_id.isnumeric():
 				continue
 			if timestamp.isnumeric() and timestamp >= since_timestamp:
-				yield from self.jobs_from_cli_args({'JobId': job_id, 'SubmitTime': timestamp}, arguments.split(' '))
+				yield from self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp}, arguments.split(' '))
 
 	def current_jobs(self):
 		output = subprocess.check_output(['squeue',
@@ -72,6 +74,7 @@ class Slurm:
 			'ARRAY_TASK_ID': 'ArrayTaskId',
 			'ARRAY_JOB_ID': 'ArrayJobId',
 			'TIME': 'Elapsed',
+			'REASON': 'Reason',
 		}
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
 		for line in lines[1:]:
@@ -79,8 +82,10 @@ class Slurm:
 			if 'ArrayTaskId' in job and '-' in job['ArrayTaskId']:
 				for task_id in self.parse_job_arrays(job['ArrayTaskId']):
 					yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], task_id), 'ArrayTaskId': task_id})
-			else:
+			elif 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A':
 				yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], job['ArrayTaskId'])})
+			else:
+				yield Job(job)
 
 	def accounting_jobs(self, additional_args=[]):
 		output = subprocess.check_output(['sacct',
@@ -122,17 +127,17 @@ class Slurm:
 			else:
 				yield Job(job)
 
-	def jobs(self, since=None):
-		scheduled = {job['JobId']: job for job in self.scheduled_jobs(since=datetime(2021, 3, 1) if since is None else since)}
+	def jobs(self, since=None, include_completed=True):
+		scheduled = {job['JobId']: job for job in self.scheduled_jobs(since=since)}
 
-		array_job_ids = set(job['ArrayJobId'] for job in scheduled.values())
+		array_job_ids = set(job.get('ArrayJobId', job['JobId']) for job in scheduled.values())
 
 		sources = []
 
-		if since:
-			sources.append(self.current_jobs())
-		else:
+		if include_completed:
 			sources.append(self.accounting_jobs(['--jobs', ','.join(array_job_ids)]))
+
+		sources.append(self.current_jobs())		
 
 		for job in chain(*sources):
 			try:
@@ -149,12 +154,21 @@ class Slurm:
 	def scheduled_job(self, job_id):
 		if '_' in job_id:
 			job_pattern = dict(zip(['ArrayJobId', 'ArrayTaskId'], job_id.split('_', maxsplit=1)))
+			job_id = job_pattern['ArrayJobId']
 		else:
 			job_pattern = {'JobId': job_id}
 
-		for job in self.scheduled_jobs():
-			if match(job_pattern, job):
-				return job
+		with open('.schedule-log') as fh:
+			for line in fh:
+				timestamp, line_job_id, arguments = line.rstrip().split(' ', maxsplit=2)
+				if not line_job_id.isnumeric():
+					continue
+				if line_job_id != job_id:
+					continue
+				for job in self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp}, arguments.split(' ')):
+					if match(job_pattern, job):
+						return job
+
 		return None
 
 	def current_job(self, job_id):
@@ -303,6 +317,10 @@ def list_collections(request):
 @app.route('/jobs/delta/<str:timestamp>', name='list_jobs_delta')
 def list_jobs(request, timestamp=None):
 	now = datetime.now()
+	if timestamp:
+		since = datetime.fromisoformat(timestamp)
+	else:
+		since = datetime.now() - timedelta(days=7)
 	return send_json({
 		'timestamp': now.isoformat(),
 		'jobs': [
@@ -313,12 +331,14 @@ def list_jobs(request, timestamp=None):
 				'collection': job.collection,
 				'slurm': job, # the dict data
 				'stdout': app.url_for('show_stream', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']), stream='stdout')
-				          if 'ArrayTaskId' in job else None,
+				          if 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A' else None,
 				'stderr': app.url_for('show_stream', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']), stream='stderr')
-				          if 'ArrayTaskId' in job else None,
+				          if 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A' else None,
 				'link': app.url_for('show_job', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']))
-				        if 'ArrayTaskId' in job else None
-			} for job in slurm.jobs(since=datetime.fromisoformat(timestamp) if timestamp is not None else None) if hasattr(job, 'language') and hasattr(job, 'collection')
+				        if 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A' else None
+			}
+			for job in slurm.jobs(since=since, include_completed=timestamp is None)
+			if hasattr(job, 'language') and hasattr(job, 'collection')
 		]
 	})
 
