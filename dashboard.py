@@ -290,7 +290,7 @@ collections = read_collections()
 
 app = Application()
 
-@app.url_type('url')
+@app.url_type('job')
 class JobConverter(URLConverter):
 	def to_pattern(self) -> str:
 		return r'\d+(?:_\d+)?'
