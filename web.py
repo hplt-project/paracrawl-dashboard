@@ -154,7 +154,7 @@ class IntConverter(URLConverter):
 		return int(val)
 
 	def to_str(self, val):
-		return '{:d}'.format(val)
+		return '{:d}'.format(int(val))
 
 
 @dataclass
