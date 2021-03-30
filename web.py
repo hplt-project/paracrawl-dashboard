@@ -32,10 +32,10 @@ def _full_stack():
 	return stackstr
 
 
-@dataclass
 class Request:
-	method: str
-	path: str
+	def __init__(self, method: str, url: str):
+		self.method = method
+		self.scheme, self.netloc, self.path, self.query, _ = urlsplit(url)
 
 @dataclass
 class Response:
@@ -219,9 +219,12 @@ class Application:
 		return None, None
 
 	def url_for(self, name: str, **kwargs) -> str:
-		for route in self.routes:
-			if route.name == name:
-				return route.path_format.format(**{key: route.path_placeholders[key].to_str(val) for key, val in kwargs.items()})
+		placeholders = set(key for key, val in kwargs.items() if val is not None)
+		for route in sorted(self.routes, reverse=True, key=lambda route: len(route.path_placeholders)):
+			if route.name == name and set(route.path_placeholders) <= placeholders:
+				path = route.path_format.format(**{key: route.path_placeholders[key].to_str(kwargs[key]) for key in route.path_placeholders})
+				query = {key: str(kwargs[key]) for key in placeholders - set(route.path_placeholders)}
+				return "{path}{glue}{query}".format(path=path, glue="?" if query else "", query=urlencode(query))
 
 	def write_response(self, response: Response, handler: BaseHTTPRequestHandler):
 		response.write(handler)
@@ -253,7 +256,9 @@ class RequestHandler(BaseHTTPRequestHandler):
 			if not self.parse_request():
 				return
 
-			route, parameters = self.app.match_route(self.path)
+			request = Request(self.command, self.path)
+			
+			route, parameters = self.app.match_route(request.path)
 
 			if not route:
 				self.send_error(HTTPStatus.NOT_FOUND, "No route found")
@@ -264,7 +269,6 @@ class RequestHandler(BaseHTTPRequestHandler):
 				return
 
 			try:
-				request = Request(self.command, self.path)
 				response = route.callback(request, **parameters)
 				self.app.write_response(response, self)
 				self.wfile.flush() #actually send the response if not already done.
