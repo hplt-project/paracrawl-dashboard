@@ -7,7 +7,8 @@ import traceback
 from itertools import chain
 from datetime import datetime, timedelta
 from pprint import pprint
-from web import Application, Response, FileResponse, main, send_file, send_json
+from web import Application, Response, FileResponse, main, send_file, send_json, URLConverter
+from typing import Any
 
 
 def match(pattern, obj):
@@ -289,6 +290,20 @@ collections = read_collections()
 
 app = Application()
 
+@app.url_type('url')
+class JobConverter(URLConverter):
+	def to_pattern(self) -> str:
+		return r'\d+(?:_\d+)?'
+
+	def to_python(self, val: str) -> int:
+		return slurm.job(val)
+
+	def to_str(self, val: Any) -> str:
+		if 'ArrayJobId' in val:
+			return '{:d}_{:d}'.format(int(val['ArrayJobId']), int(val['ArrayTaskId']))
+		else:
+			return '{:d}'.format(int(val['JobId']))
+
 
 @app.route('/')
 def index(request):
@@ -330,9 +345,9 @@ def list_jobs(request, timestamp=None):
 				'language': job.language,
 				'collection': job.collection,
 				'slurm': job, # the dict data
-				'stdout': app.url_for('show_stream', array_job_id=job['ArrayJobId'], array_task_id=job.get('ArrayTaskId'), stream='stdout'),
-				'stderr': app.url_for('show_stream', array_job_id=job['ArrayJobId'], array_task_id=job.get('ArrayTaskId'), stream='stderr'),
-				'link': app.url_for('show_job', array_job_id=job['ArrayJobId'], array_task_id=job.get('ArrayTaskId')),
+				'stdout': app.url_for('show_stream', job=job, stream='stdout'),
+				'stderr': app.url_for('show_stream', job=job, stream='stderr'),
+				'link': app.url_for('show_job', job=job),
 			}
 			for job in slurm.jobs(since=since, include_completed=timestamp is None)
 			if hasattr(job, 'language') and hasattr(job, 'collection')
@@ -346,20 +361,13 @@ def tail(filename):
 			return fh.read()
 
 
-@app.route('/jobs/<int:array_job_id>/')
-@app.route('/jobs/<int:array_job_id>/<int:array_task_id>')
-def show_job(request, array_job_id, array_task_id=None):
-	job = slurm.job(str(array_job_id) if array_task_id is None
-	                else '{:d}_{:d}'.format(array_job_id, array_task_id))
-
-	if not job:
-		return Response('Job not found in schedule log', status_code=404)
-
+@app.route('/jobs/<job:job>/')
+def show_job(request, job):
 	return send_json({
 		'id': job['JobId'],
 		'slurm': job,
-		'stdout': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stdout'),
-		'stderr': app.url_for('show_stream', array_job_id=array_job_id, array_task_id=array_task_id, stream='stderr')
+		'stdout': app.url_for('show_stream', job=job, stream='stdout'),
+		'stderr': app.url_for('show_stream', job=job, stream='stderr')
 	})
 
 
@@ -379,15 +387,8 @@ class Tailer:
 		self.proc.wait() # wait to prevent zombie
 
 
-@app.route('/jobs/<int:array_job_id>/<any(stdout,stderr):stream>')
-@app.route('/jobs/<int:array_job_id>/<int:array_task_id>/<any(stdout,stderr):stream>')
-def show_stream(request, stream, array_job_id, array_task_id=None):
-	job = slurm.job(str(array_job_id) if array_task_id is None
-	                else '{:d}_{:d}'.format(array_job_id, array_task_id))
-
-	if not job:
-		return Response('Job not found in schedule log', status_code=404)
-
+@app.route('/jobs/<job:job>/<any(stdout,stderr):stream>')
+def show_stream(request, stream, job):
 	mapping = {
 		'stdout': 'StdOut',
 		'stderr': 'StdErr'
