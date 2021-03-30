@@ -330,12 +330,9 @@ def list_jobs(request, timestamp=None):
 				'language': job.language,
 				'collection': job.collection,
 				'slurm': job, # the dict data
-				'stdout': app.url_for('show_stream', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']), stream='stdout')
-				          if 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A' else None,
-				'stderr': app.url_for('show_stream', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']), stream='stderr')
-				          if 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A' else None,
-				'link': app.url_for('show_job', array_job_id=int(job['ArrayJobId']), array_task_id=int(job['ArrayTaskId']))
-				        if 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A' else None
+				'stdout': app.url_for('show_stream', array_job_id=job['ArrayJobId'], array_task_id=job.get('ArrayTaskId'), stream='stdout'),
+				'stderr': app.url_for('show_stream', array_job_id=job['ArrayJobId'], array_task_id=job.get('ArrayTaskId'), stream='stderr'),
+				'link': app.url_for('show_job', array_job_id=job['ArrayJobId'], array_task_id=job.get('ArrayTaskId')),
 			}
 			for job in slurm.jobs(since=since, include_completed=timestamp is None)
 			if hasattr(job, 'language') and hasattr(job, 'collection')
@@ -349,9 +346,11 @@ def tail(filename):
 			return fh.read()
 
 
+@app.route('/jobs/<int:array_job_id>/')
 @app.route('/jobs/<int:array_job_id>/<int:array_task_id>')
-def show_job(request, array_job_id, array_task_id):
-	job = slurm.job('{:d}_{:d}'.format(array_job_id, array_task_id))
+def show_job(request, array_job_id, array_task_id=None):
+	job = slurm.job(str(array_job_id) if array_task_id is None
+	                else '{:d}_{:d}'.format(array_job_id, array_task_id))
 
 	if not job:
 		return Response('Job not found in schedule log', status_code=404)
@@ -380,9 +379,11 @@ class Tailer:
 		self.proc.wait() # wait to prevent zombie
 
 
+@app.route('/jobs/<int:array_job_id>/<any(stdout,stderr):stream>')
 @app.route('/jobs/<int:array_job_id>/<int:array_task_id>/<any(stdout,stderr):stream>')
-def show_stream(request, array_job_id, array_task_id, stream):
-	job = slurm.job('{:d}_{:d}'.format(array_job_id, array_task_id))
+def show_stream(request, stream, array_job_id, array_task_id=None):
+	job = slurm.job(str(array_job_id) if array_task_id is None
+	                else '{:d}_{:d}'.format(array_job_id, array_task_id))
 
 	if not job:
 		return Response('Job not found in schedule log', status_code=404)
