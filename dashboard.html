@@ -742,8 +742,8 @@
 				// });
 			});
 
-			router.add(/^\/jobs\/(?<job_id>\d+)\/(?<job_array_id>\d+)$/, (root, {url, job_id, job_array_id}) => {
-				const job = index.find(`${job_id}_${job_array_id}`)
+			router.add(/^\/jobs\/(?<job_id>\d+(_\d+)?)\/$/, (root, {url, job_id}) => {
+				const job = index.find(job_id)
 
 				// Fetch more details about this job
 				fetch(url)
