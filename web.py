@@ -16,9 +16,10 @@ import socket # For gethostbyaddr()
 import select
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler, HTTPStatus, test as _http_server_test
 import shutil
+from io import BufferedReader
 
 
-def _full_stack():
+def _full_stack() -> str:
 	import traceback, sys
 	exc = sys.exc_info()[0]
 	stack = traceback.extract_stack()[:-1]  # last one would be full_stack()
@@ -43,19 +44,19 @@ class Response:
 	headers: Dict[str,Any]
 	body: str
 
-	def __init__(self, body:str, status_code:int = 200, headers: Dict[str,Any] = None):
+	def __init__(self, body:str, status_code:int = 200, headers: Optional[Dict[str,Any]] = None):
 		self.status_code = status_code
 		self.headers = headers or dict()
 		self.body = body
 
-	def _write_headers(self, handler):
+	def _write_headers(self, handler: BaseHTTPRequestHandler) -> None:
 		status_phrases = {status: status.phrase for status in HTTPStatus.__members__.values()}
 		handler.send_response(self.status_code, status_phrases[self.status_code])
 		for key, value in self.headers.items():
 			handler.send_header(key, value)
 		handler.end_headers()
 
-	def write(self, handler):
+	def write(self, handler: BaseHTTPRequestHandler) -> None:
 		body = str(self.body).encode('utf-8', 'replace')
 		self.headers['Content-Length'] = len(body)
 		self._write_headers(handler)
@@ -63,11 +64,11 @@ class Response:
 
 
 class FileResponse(Response):
-	def __init__(self, fh, status_code:int = 200, headers: Dict[str,Any] = None):
+	def __init__(self, fh: BufferedReader, status_code:int = 200, headers: Optional[Dict[str,Any]] = None):
 		super().__init__('', status_code, headers)
 		self.fh = fh
 
-	def write(self, handler):
+	def write(self, handler: BaseHTTPRequestHandler) -> None:
 		self._write_headers(handler)
 		os.set_blocking(self.fh.fileno(), False)
 		
@@ -88,13 +89,13 @@ class FileResponse(Response):
 				handler.wfile.write(data)
 				handler.wfile.flush()
 
-	def __del__(self):
+	def __del__(self) -> None:
 		self.fh.close()
 
 
 class URLConverter(ABC):
 	@abstractmethod
-	def to_pattern(self) -> re.Pattern:
+	def to_pattern(self) -> str:
 		pass
 
 	@abstractmethod
@@ -107,53 +108,53 @@ class URLConverter(ABC):
 
 
 class PathConverter(URLConverter):
-	def to_pattern(self):
+	def to_pattern(self) -> str:
 		return r'.*'
 
-	def to_python(self, val):
-		return unquote_plus(str(val), safe='/')
+	def to_python(self, val: str) -> str:
+		return unquote_plus(str(val))
 
-	def to_str(sel, val):
+	def to_str(sel, val: str) -> str:
 		return quote_plus(str(val), safe='/')
 
 
 class AnyConverter(URLConverter):
-	def __init__(self, *options):
+	def __init__(self, *options: str):
 		self.options = options
 
-	def to_pattern(self):
+	def to_pattern(self) -> str:
 		return '|'.join(re.escape(option) for option in self.options)
 
-	def to_python(self, val):
+	def to_python(self, val: str) -> str:
 		if val not in self.options:
 			raise RuntimeError('How did this match this pattern?')
-		return unquote_plus(str(val))
+		return unquote_plus(val)
 
-	def to_str(self, val):
+	def to_str(self, val: Any) -> str:
 		if val not in self.options:
 			raise ValueError('Not one of the options that fit in this part of the url')
 		return quote_plus(str(val))
 
 
 class StrConverter(URLConverter):
-	def to_pattern(self):
+	def to_pattern(self) -> str:
 		return r'[^/]+'
 
-	def to_python(self, val):
+	def to_python(self, val: str) -> str:
 		return unquote_plus(str(val))
 
-	def to_str(self, val):
+	def to_str(self, val: Any) -> str:
 		return quote_plus(str(val))
 
 
 class IntConverter(URLConverter):
-	def to_pattern(self):
+	def to_pattern(self) -> str:
 		return r'\d+'
 
-	def to_python(self, val):
+	def to_python(self, val: str) -> int:
 		return int(val)
 
-	def to_str(self, val):
+	def to_str(self, val: Any) -> str:
 		return '{:d}'.format(int(val))
 
 
@@ -161,11 +162,14 @@ class IntConverter(URLConverter):
 class Route:
 	name: str
 	methods: Set[str] 
-	callback: Callable
-	path_expression: re.Pattern
+	callback: Callable[..., Response]
+	path_expression: Pattern[str]
 	path_format: str
 	path_placeholders: Dict[str,URLConverter]
 
+
+# Fun = TypeVar('Fun', Callable[..., Response])
+Fun = TypeVar('Fun')
 
 class Application:
 	def __init__(self):
@@ -196,7 +200,7 @@ class Application:
 			return fn
 		return register
 
-	def compile_route(self, path_pattern: str, **kwargs) -> re.Pattern:
+	def compile_route(self, path_pattern: str, **kwargs) -> Pattern[str]:
 		path_expression = ''
 		path_format = ''
 		path_placeholders = {}
