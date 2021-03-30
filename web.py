@@ -6,7 +6,7 @@ import sys
 import mimetypes
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Set, Callable, Type, Any, Dict, List, Optional, Tuple
+from typing import Set, Callable, Type, Any, Dict, List, Optional, Tuple, Optional, Pattern, TypeVar, Type
 from dataclasses import dataclass
 from pprint import pprint, pformat
 from collections import defaultdict
@@ -178,9 +178,16 @@ class Application:
 
 		self.routes = []
 
-	def route(self, route: str, methods: Set[str] = {'GET'}, name: Optional[str] = None) -> Callable[[Callable], Callable]:
+	def url_type(self, name) -> Callable[[Type[URLConverter]], Type[URLConverter]]:
+		url_types = self.url_types
+		def register(cls: Type[URLConverter]) -> Type[URLConverter]:
+			url_types[name] = cls
+			return cls
+		return register
+
+	def route(self, route: str, methods: Set[str] = {'GET'}, name: Optional[str] = None) -> Callable[[Fun], Fun]:
 		routes = self.routes
-		def register(fn):
+		def register(fn: Fun) -> Fun:
 			routes.append(self.compile_route(
 				path_pattern=route,
 				name=name or fn.__name__,
