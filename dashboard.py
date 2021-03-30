@@ -260,7 +260,11 @@ class Slurm:
 				raise ValueError("Cannot parse arg '{}'".format(arg))
 
 		if not job_array:
-			yield Job(job)
+			yield Job({
+				**job,
+				'StdOut': job.get('StdOut', '').replace('%A', job['JobId']),
+				'StdErr': job.get('StdOut', '').replace('%A', job['JobId']),
+			})
 		else:
 			for array_task_id in self.parse_job_arrays(job_array):
 				yield Job({
