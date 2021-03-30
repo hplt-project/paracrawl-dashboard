@@ -312,15 +312,16 @@
 				}
 
 				async dispatchInternal(url) {
-					const {route, match} = first(this.routes, route => {
+					const found = first(this.routes, route => {
 						const match = url.match(route.pattern);
 						if (match)
 							return {route, match};
 					});
 
-					if (!route)
+					if (!found)
 						throw Error(`No route for "${url}"`);
-
+					
+					const {route, match} = found;
 					const state = ++this.serial;
 					const page = h('div', {className: 'page'}, []);
 
