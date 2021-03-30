@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pprint import pprint, pformat
 from collections import defaultdict
 from itertools import chain
-from urllib.parse import quote_plus, unquote_plus
+from urllib.parse import quote_plus, unquote_plus, urlencode, urlsplit
 import socket # For gethostbyaddr()
 import select
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler, HTTPStatus, test as _http_server_test
