@@ -592,7 +592,7 @@
 			}
 
 			function formatJobArray(job) {
-				const match = job.slurm['JobName'].match(/(\w+)-/)
+				const match = job.slurm['JobName'].match(/(warc2text|reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered|shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|clean)-/)
 				return match && match[1] || job.slurm['JobName']
 			}
 
