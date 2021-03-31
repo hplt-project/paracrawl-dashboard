@@ -184,6 +184,14 @@
 				text-overflow: ellipsis;
 				overflow: hidden;
 			}
+
+			.lang-cs td,
+			.lang-de td,
+			.lang-fi td,
+			.lang-ro td,
+			.lang-lv td {
+				background: rgba(0, 255, 255, 0.1);
+			}
 		</style>
 	</head>
 	<body>
@@ -527,10 +535,16 @@
 			}
 
 			function renderGrid(table, collections) {
+				const SPANISH_COOFFICIAL_LANGUAGES = ['ca', 'eu', 'oc', 'gl'];
 				const languages = Array.from(collections.reduce((languages, collection) => {
 					collection.languages.forEach(language => languages.add(language))
 					return languages
-				}, new Set())).sort();
+				}, new Set())).sort((a, b) => {
+					if (SPANISH_COOFFICIAL_LANGUAGES.includes(a) ^ SPANISH_COOFFICIAL_LANGUAGES.includes(b))
+						return SPANISH_COOFFICIAL_LANGUAGES.includes(a) ? -1 : 1;
+					else
+						return a < b ? -1 : 1;
+				});
 
 				// Add the non-language-specific jobs at the end
 				languages.push(UNSPECIFIED_LANGUAGE);
@@ -555,7 +569,7 @@
 				const grid = Object.fromEntries(collections.map(collection => [collection.name, {}]));
 
 				table.appendChild(h('tbody', {},
-					languages.map(language => h('tr', {}, [
+					languages.map(language => h('tr', language !== UNSPECIFIED_LANGUAGE ? {className: `lang-${language}`} : {}, [
 						h('th', {}, [language !== UNSPECIFIED_LANGUAGE ? language : '']),
 						...collections.map(collection => {
 							const td = h('td', {}, []);
