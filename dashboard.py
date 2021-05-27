@@ -33,6 +33,9 @@ class Job(dict):
 			elif match := re.match(r'^(warc2text)-([a-z]+[a-z0-9\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], None, match[2]
 
+		if 'ArrayTaskId' in self and self['ArrayTaskId'] == 'N/A':
+			raise ValueError('Job {} as an ArrayTaskId of N/A'.format(self['JobId']))
+
 
 class Collection:
 	def __init__(self, path):
@@ -80,13 +83,16 @@ class Slurm:
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
 		for line in lines[1:]:
 			job = dict(zip(headers, line.strip().split('|')))
-			if 'ArrayTaskId' in job and '-' in job['ArrayTaskId']:
+
+			if job['ArrayTaskId'] == 'N/A':
+				yield Job({key: val for key, val in job.items() if key not in {'ArrayJobId', 'ArrayTaskId'}})
+			elif 'ArrayTaskId' in job and '-' in job['ArrayTaskId']:
 				for task_id in self.parse_job_arrays(job['ArrayTaskId']):
 					yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], task_id), 'ArrayTaskId': task_id})
 			elif 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A':
 				yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], job['ArrayTaskId'])})
 			else:
-				yield Job(job)
+				raise ValueError('Job interpretation error: {!r}'.format(job))
 
 	def accounting_jobs(self, additional_args=[]):
 		output = subprocess.check_output(['sacct',
@@ -104,26 +110,26 @@ class Slurm:
 		headers = [mapping.get(header, header) for header in lines[0].strip().split('|')]
 		for line in lines[1:]:
 			job = dict(zip(headers, line.strip().split('|')))
-			match = re.match(r'^(\d+)_(?:\d+|\[(\d+)(?:-(\d+))?\])$', job['JobId'])
+			match = re.match(r'^(?P<array_job_id>\d+)(?:_(?P<array_task_id>\d+)|\[(?P<array_task_start>\d+)(?:-(?P<array_task_end>\d+))?\])?$', job['JobId'])
 
 			# job with suffix, like \d_\d.batch or .extern
 			if not match:
 				continue
 
 			# It's a collapsed job array!
-			if match[3]:
-				for task_id in range(int(match[2]), int(match[3]) + 1):
+			if match['array_task_start'] and match['array_task_end']:
+				for task_id in range(int(match['array_task_start']), int(match['array_task_end']) + 1):
 					yield Job({**job,
-						'JobId': '{}_{}'.format(match[1], task_id),
-						'ArrayJobId': match[1],
+						'JobId': '{}_{}'.format(match['array_job_id'], task_id),
+						'ArrayJobId': match['array_job_id'],
 						'ArrayTaskId': str(task_id)
 					})
-			elif match[2]:
+			elif match['array_task_id'] or match['array_task_start']:
 				yield Job({
 					**job,
-					'JobId': '{}_{}'.format(match[1], int(match[2])),
-					'ArrayJobId': match[1],
-					'ArrayTaskId': match[2]
+					'JobId': '{}_{}'.format(match['array_job_id'], int(match['array_task_id'] or match['array_task_start'])),
+					'ArrayJobId': match['array_job_id'],
+					'ArrayTaskId': match['array_task_id'] or match['array_task_end']
 				})
 			else:
 				yield Job(job)
@@ -211,6 +217,8 @@ class Slurm:
 		for job_array in job_arrays.split(','):
 			if '-' in job_array:
 				start, end = job_array.split('-', maxsplit=1)
+				if '%' in end:
+					end = end[:end.find('%')] # strip concurrent task limit
 				yield from range(int(start), int(end) + 1)
 			else:
 				yield int(job_array)
