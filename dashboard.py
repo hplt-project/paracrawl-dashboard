@@ -263,7 +263,7 @@ class Slurm:
 			elif arg == '-o':
 				job['StdOut'] = next(it)
 			elif arg[0] != '-':
-				job['Command'] = list(it)
+				job['Command'] = tuple(it)
 			else:
 				raise ValueError("Cannot parse arg '{}'".format(arg))
 
@@ -302,13 +302,88 @@ collections = read_collections()
 
 app = Application()
 
+class JobList:
+	def __init__(self, jobs=[], timestamp=None):
+		self.jobs = {job['JobId']: (job, timestamp) for job in jobs}
+
+	def update(self, jobs, timestamp=None):
+		if isinstance(jobs, self.__class__) and timestamp is None:
+			jobs_iter = jobs.jobs.values()
+		else:
+			jobs_iter = ((job, timestamp) for job in jobs)
+
+		for job, job_timestamp in jobs_iter:
+			if job['JobId'] in self.jobs:
+				current, current_timestamp = self.jobs[job['JobId']]
+				if set(job.items()) - set(current.items()):
+					self.jobs[job['JobId']] = (type(current)({**current, **job}), job_timestamp)
+			else:
+				self.jobs[job['JobId']] = (job, job_timestamp)
+
+	def __iter__(self):
+		return iter(job for job, ts in self.jobs.values())
+
+	def with_timestamp(self):
+		return self.jobs.values()
+
+	def filter(self, op):
+		job_list = self.__class__()
+		job_list.jobs = {
+			job_id: (job, timestamp)
+			for job_id, (job, timestamp) in self.jobs.items()
+			if op(job)
+		}
+		return job_list
+
+	def get(self, job_id):
+		return self.jobs[job_id][0]
+
+	def job_ids(self):
+		return self.jobs.keys()
+
+
+class State:
+	STALE_STATES = {
+		'COMPLETED',
+		'CANCELLED',
+		'FAILED'
+	}
+
+	def __init__(self, since):
+		self.last_update = datetime.now()
+		self.jobs = JobList(slurm.jobs(since=since, include_completed=True), timestamp=self.last_update)
+
+	def update(self):
+		# Active jobs (that we need updates on)
+		active_jobs = self.jobs.filter(lambda job: 'State' not in job or job['State'] not in self.STALE_STATES)
+
+		last_update = datetime.now()
+
+		# Add any new scheduled jobs
+		active_jobs.update(slurm.scheduled_jobs(since=self.last_update), timestamp=last_update)
+
+		# Query latest status on these jobs
+		active_jobs.update(slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())]), timestamp=last_update)
+
+		self.jobs.update(active_jobs)
+		self.last_update = last_update
+
+		return active_jobs
+
+	def get_job(self, job_id):
+		return self.jobs.get(job_id)
+
+
+state = State(since=datetime.now() - timedelta(days=7))
+
+
 @app.url_type('job')
 class JobConverter(URLConverter):
 	def to_pattern(self) -> str:
 		return r'\d+(?:_\d+)?'
 
 	def to_python(self, val: str) -> int:
-		return slurm.job(val)
+		return state.get_job(val)
 
 	def to_str(self, val: Any) -> str:
 		if 'ArrayJobId' in val:
@@ -343,13 +418,13 @@ def list_collections(request):
 @app.route('/jobs/')
 @app.route('/jobs/delta/<str:timestamp>', name='list_jobs_delta')
 def list_jobs(request, timestamp=None):
-	now = datetime.now()
+	state.update()
 	if timestamp:
 		since = datetime.fromisoformat(timestamp)
 	else:
 		since = datetime.now() - timedelta(days=7)
 	return send_json({
-		'timestamp': now.isoformat(),
+		'timestamp': state.last_update.isoformat(),
 		'jobs': [
 			{
 				'id': job['JobId'],
@@ -360,9 +435,11 @@ def list_jobs(request, timestamp=None):
 				'stdout': app.url_for('show_stream', job=job, stream='stdout'),
 				'stderr': app.url_for('show_stream', job=job, stream='stderr'),
 				'link': app.url_for('show_job', job=job),
+				'last_update': job_timestamp.isoformat()
 			}
-			for job in slurm.jobs(since=since, include_completed=timestamp is None)
-			if hasattr(job, 'language') and hasattr(job, 'collection')
+			for job, job_timestamp in state.jobs.with_timestamp()
+			if job_timestamp > since \
+			and hasattr(job, 'language') and hasattr(job, 'collection')
 		]
 	})
 
