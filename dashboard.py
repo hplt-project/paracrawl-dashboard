@@ -298,7 +298,7 @@ def read_collections():
 
 slurm = Slurm()
 
-collections = read_collections()
+# collections = read_collections()
 
 app = Application()
 
@@ -365,6 +365,9 @@ class State:
 		# Query latest status on these jobs
 		active_jobs.update(slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())]), timestamp=last_update)
 
+		# Query active jobs
+		active_jobs.update(slurm.current_jobs(), timestamp=last_update);
+
 		self.jobs.update(active_jobs)
 		self.last_update = last_update
 
@@ -411,7 +414,7 @@ def list_collections(request):
 		{
 			'name': name,
 			'languages': collection.languages
-		} for name, collection in collections.items()
+		} for name, collection in read_collections().items()
 	])
 
 
