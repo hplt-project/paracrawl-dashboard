@@ -5,6 +5,7 @@
 		<style>
 			body {
 				font:  14px/18px sans-serif;
+				margin-bottom: 2em;
 			}
 
 			#job-grid	{
@@ -228,6 +229,35 @@
 			.lang-lv td {
 				background: rgba(0, 255, 255, 0.1);
 			}
+
+			#status-bar {
+				position: fixed;
+				bottom: 0;
+				left: 0;
+				right: 0;
+				background: white;
+				border-top: 1px solid #ccc;
+				z-index: 10;
+				line-height: 2em;
+				padding:  0 0.25em;
+			}
+
+			#job-status {
+				display: flex;
+			}
+
+			#job-status .state-count {
+				flex: 0 0 auto;
+				margin: 0 0.25em;
+			}
+
+			#job-status .state {
+				opacity: 0.6;
+			}
+
+			#job-status .state::after {
+				content: ': ';
+			}
 		</style>
 	</head>
 	<body>
@@ -239,7 +269,7 @@
 				'#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4',
 				'#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990', '#dcbeff',
 				'#9A6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1',
-				'#000075', '#a9a9a9', '#ffffff', '#000000'
+				'#000075', '#a9a9a9', '#000000'
 			];
 
 			function identity(x) {
@@ -580,7 +610,7 @@
 				async function render() {
 					try {
 						for await (let line of lines(data)) {
-							const match = line.match(/^(\[.+?\])\t(.+?)$/);
+							const match = line.match(/^(\[.+?\]|\d+)\t(.+?)$/);
 							if (match) {
 								if (!(match[1] in markers))
 									markers[match[1]] = Object.keys(markers).length;
@@ -787,6 +817,35 @@
 				}, {once: true});
 			}
 
+			function tryParseInt(val, fallback) {
+				const int = parseInt(val, 10);
+				return isNaN(int) ? fallback : int;
+			}
+
+			function updateJobCounts(root, index) {
+				const counts = {
+					pending: 0,
+					hold: 0,
+					running: 0,
+					cpus: 0
+				};
+
+				index.forEach(job => {
+					if ('State' in job.slurm) {
+						counts['pending'] += 'State' in job.slurm && job.slurm['State'] == 'PENDING' && job.slurm['Reason'] != 'JobHeldUser' ? 1 : 0;
+						counts['hold']    += 'State' in job.slurm && job.slurm['State'] == 'PENDING' && job.slurm['Reason'] == 'JobHeldUser' ? 1 : 0;
+						counts['running'] += 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? 1 : 0;
+						counts['cpus']    += 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? tryParseInt(job.slurm['AllocCPUS'], 0) : 0;
+					}
+				});
+
+				root.querySelectorAll('.state-count').forEach(el => {
+					const state = el.querySelector('.state').textContent;
+					el.hidden = counts[state] === 0;
+					el.querySelector('.count').textContent = counts[state].toString();
+				});
+			}
+
 			const router = new Router();
 
 			const index = new List(job => job.id);
@@ -802,6 +861,24 @@
 			}, 60 * 1000);
 
 			updater.startImmediate();
+
+			const jobStatusBar = h('div', {'id': 'job-status'},
+				['pending', 'hold', 'running', 'cpus'].map(state => {
+					return h('div', {'className': 'state-count'}, [
+						h('span', {'className': 'state'}, [state]),
+						h('span', {'className': 'count'}, ['0'])
+					]);
+				}));
+
+			const updateCounts = debounce(updateJobCounts.bind(null, jobStatusBar, index));
+			index.addEventListener('add', updateCounts);
+
+			const diskStatusBar = h('div', {'id': 'disk-status'}, []);
+
+			document.body.appendChild(h('div', {'id': 'status-bar'}, [
+				jobStatusBar,
+				diskStatusBar
+			]));
 
 			router.add(/^\/$/, async (root) => {
 				const collections = await fetchJSON('/collections/');
