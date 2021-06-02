@@ -65,6 +65,22 @@
 				z-index: 10;
 			}
 
+			#job-grid td.pending {
+				background-color: rgba(51, 204, 255, 0.1);
+			}
+
+			#job-grid td.running {
+				background-color: rgba(255, 204, 0, 0.1);
+			}
+
+			#job-grid td.completed {
+				background-color: rgba(0, 170, 0, 0.1);
+			}
+
+			#job-grid td.failed {
+				background-color: rgba(204, 51, 51, 0.1);
+			}
+
 			#job-grid th, #job-grid td {
 				vertical-align: top;
 			}
@@ -77,6 +93,16 @@
 
 			#job-grid tr:nth-child(even) {
 				background: #eee;
+			}
+
+			#job-grid .unavailable {
+				background-image: repeating-linear-gradient(
+				  45deg,
+				  rgba(128, 128, 128, 0.1),
+				  rgba(128, 128, 128, 0.1) 3px,
+				  rgba(255, 255, 255, 0) 3px,
+				  rgba(255, 255, 255, 0) 12px
+				);
 			}
 
 			#job-grid .unavailable::after {
@@ -612,6 +638,16 @@
 
 				const grid = Object.fromEntries(collections.map(collection => [collection.name, {}]));
 
+				function updateGridCell() {
+					// Pending or running depends on any job in the job array
+					this.classList.toggle('pending', this.querySelector('.job-array.pending'));
+					this.classList.toggle('running', this.querySelector('.job-array.running'));
+
+					// Completed or failed only on the last one
+					this.classList.toggle('failed', this.querySelector('.job-array:last-child.failed'));
+					this.classList.toggle('completed', this.querySelector('.job-array:last-child.completed'));
+				}
+
 				table.appendChild(h('tbody', {},
 					languages.map(language => h('tr', language !== UNSPECIFIED_LANGUAGE ? {className: `lang-${language}`} : {}, [
 						h('th', {}, [language !== UNSPECIFIED_LANGUAGE ? language : '']),
@@ -619,7 +655,7 @@
 							const td = h('td', {}, []);
 							if (!collection.languages.includes(language) && language !== UNSPECIFIED_LANGUAGE)
 								td.classList.add('unavailable');
-							grid[collection.name][language] = {td};
+							grid[collection.name][language] = {td, update: debounce(updateGridCell.bind(td))}
 							return td;
 						})
 					]))
@@ -691,15 +727,19 @@
 						bar.style.width = formatPercentage(counts[className], counts['job']);
 						bar.hidden = counts[className] == 0;
 					});
-					
-					// Mark the whole list as running if there is something running
-					list.parentNode.classList.toggle('running', counts['running'] > 0);
 
-					// Mark the whole list as completed if all jobs are completed
+					// Mark the whole list as running if there is something running
+					list.parentNode.classList.toggle('pending', counts['pending'] > 0);
+					list.parentNode.classList.toggle('running', counts['running'] > 0);
+					list.parentNode.classList.toggle('failed', counts['failed'] > 0);
+					
+					// Mark the whole list as completed if *all* jobs are completed
 					list.parentNode.classList.toggle('completed', counts['completed'] == counts['job']);
 
 					// Update the little progress indicator text
 					progress.textContent = `${counts['running']}/${counts['job']}`;
+
+					cell.update();
 				});
 
 				return list;
