@@ -437,6 +437,28 @@
 				});
 			}
 
+			function debounce(fn) {
+				let promise = null;
+
+				return function debounced() {
+					if (!promise) {
+						promise = new Promise((accept, reject) => {
+							setTimeout(() => {
+								try {
+									accept(fn.apply(undefined, arguments));
+								} catch (e) {
+									reject(e);
+								} finally {
+									promise = null;
+								}
+							});
+						});
+					}
+
+					return promise
+				}
+			}
+
 			function h(name, options, children) {
 				const el = document.createElement(name);
 				
@@ -643,7 +665,7 @@
 					list
 				]));
 
-				list.update = () => {
+				list.update = debounce(() => {
 					const counts = {
 						'job': 0,
 						'pending': 0,
@@ -678,7 +700,7 @@
 
 					// Update the little progress indicator text
 					progress.textContent = `${counts['running']}/${counts['job']}`;
-				}
+				});
 
 				return list;
 			}
