@@ -884,11 +884,6 @@
 				const collections = await fetchJSON('/collections/');
 				collections.sort((left, right) => left.name.localeCompare(right.name));
 
-				// const since = h('input', {type: 'datetime-local'});
-				// root.appendChild(h('div', {className: 'controls'}, [
-				// 	h('label', {}, ['Only show jobs since:', since])
-				// ]));
-
 				const table = h('table', {'id': 'job-grid'});
 				root.appendChild(table);
 
@@ -903,18 +898,6 @@
 				root.addEventListener('destroy', e => {
 					index.removeEventListener('add', addJob);
 				}, {once: true});
-
-				// since.addEventListener('input', e => {
-
-				// });
-
-				// Refresh now
-				// updater.startImmediate();
-				
-				// // Refresh when page becomes visible again
-				// root.addEventListener('show', e => {
-				// 	updater.startImmediate();
-				// });
 			});
 
 			router.add(/^\/jobs\/(?<job_id>\d+(_\d+)?)\/$/, (root, {url, job_id}) => {
