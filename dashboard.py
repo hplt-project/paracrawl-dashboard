@@ -488,5 +488,30 @@ def show_stream(request, stream, job):
 
 	return FileResponse(Tailer(job[mapping[stream]]))
 
+
+def quota():
+	lines = subprocess.check_output("quota").decode().splitlines()
+
+	columns = [
+		'proj', 
+		'size_usage', 'size_quota', 'size_limit', 'size_grace',
+		'file_usage', 'file_quota', 'file_limit', 'file_grace',
+		'account'
+	]
+
+	for line in lines[1:]:
+		fields = re.split(r'\s+', line)
+		if len(fields) == len(columns):
+			yield {
+				column: float(value) if re.match(r'^\d+(\.\d+)?$', value) else value
+				for column, value in zip(columns, fields)
+			}
+
+
+@app.route('/quota/')
+def list_quota(request):
+	return send_json(list(quota()))
+
+
 if __name__ == "__main__":        
 	main(app)

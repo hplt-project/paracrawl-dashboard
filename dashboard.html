@@ -240,22 +240,26 @@
 				z-index: 10;
 				line-height: 2em;
 				padding:  0 0.25em;
+
+				display: flex;
+				justify-content: space-between;
 			}
 
-			#job-status {
+			#status-bar .status-group {
+				flex: 0 0 auto;
 				display: flex;
 			}
 
-			#job-status .state-count {
+			#status-bar .status-group .status-widget {
 				flex: 0 0 auto;
 				margin: 0 0.25em;
 			}
 
-			#job-status .state {
+			#status-bar .status-group .label {
 				opacity: 0.6;
 			}
 
-			#job-status .state::after {
+			#status-bar .status-group .label::after {
 				content: ': ';
 			}
 		</style>
@@ -817,6 +821,20 @@
 				}, {once: true});
 			}
 
+			function formatFileSize(filesize, unit) {
+				const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+				let current = unit ? units.indexOf(unit) : 0;
+				while (filesize > 1000 && current < units.length) {
+					filesize /= 1000;
+					current += 1;
+				}
+				return `${filesize.toFixed(1)} ${units[current]}`;
+			}
+
+			function capitalize(str) {
+				return str.split(' ').map(word => word.substr(0, 1).toUpperCase() + word.substr(1)).join(' ');
+			}
+
 			function tryParseInt(val, fallback) {
 				const int = parseInt(val, 10);
 				return isNaN(int) ? fallback : int;
@@ -827,7 +845,7 @@
 					pending: 0,
 					hold: 0,
 					running: 0,
-					cpus: 0
+					cores: 0
 				};
 
 				index.forEach(job => {
@@ -835,12 +853,12 @@
 						counts['pending'] += 'State' in job.slurm && job.slurm['State'] == 'PENDING' && job.slurm['Reason'] != 'JobHeldUser' ? 1 : 0;
 						counts['hold']    += 'State' in job.slurm && job.slurm['State'] == 'PENDING' && job.slurm['Reason'] == 'JobHeldUser' ? 1 : 0;
 						counts['running'] += 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? 1 : 0;
-						counts['cpus']    += 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? tryParseInt(job.slurm['AllocCPUS'], 0) : 0;
+						counts['cores']   += 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? tryParseInt(job.slurm['AllocCPUS'], 0) : 0;
 					}
 				});
 
-				root.querySelectorAll('.state-count').forEach(el => {
-					const state = el.querySelector('.state').textContent;
+				root.querySelectorAll('.status-widget').forEach(el => {
+					const state = el.dataset.state;
 					el.hidden = counts[state] === 0;
 					el.querySelector('.count').textContent = counts[state].toString();
 				});
@@ -862,23 +880,41 @@
 
 			updater.startImmediate();
 
-			const jobStatusBar = h('div', {'id': 'job-status'},
-				['pending', 'hold', 'running', 'cpus'].map(state => {
-					return h('div', {'className': 'state-count'}, [
-						h('span', {'className': 'state'}, [state]),
-						h('span', {'className': 'count'}, ['0'])
+			const jobStatusBar = h('div', {'id': 'job-status', 'className': 'status-group'},
+				['pending', 'hold', 'running', 'cores'].map(state => {
+					return h('div', {'className': 'status-widget', 'dataset': {state}}, [
+						h('span', {'className': 'label state'}, [capitalize(state)]),
+						h('span', {'className': 'value count'}, ['0'])
 					]);
 				}));
 
 			const updateCounts = debounce(updateJobCounts.bind(null, jobStatusBar, index));
 			index.addEventListener('add', updateCounts);
 
-			const diskStatusBar = h('div', {'id': 'disk-status'}, []);
+			const diskStatusBar = h('div', {'id': 'disk-status', 'className': 'status-group'},
+				['rds-48gU72OtDNY'].map(proj => {
+					return h('div', {'className': 'status-widget', 'dataset': {proj}}, [
+						h('span', {'className': 'label'}, ['Disk space remaining']),
+						h('span', {'className': 'value remaining size'}, ['0'])
+					]);
+				}));
 
 			document.body.appendChild(h('div', {'id': 'status-bar'}, [
 				jobStatusBar,
 				diskStatusBar
 			]));
+
+			const diskUsageUpdater = new Interval(async () => {
+				return fetchJSON('/quota/').then(quota => {
+					diskStatusBar.querySelectorAll('.status-widget').forEach(el => {
+						const proj = el.dataset.proj;
+						const entry = quota.find(entry => entry['proj'] === proj);
+						el.querySelector('.remaining').textContent = formatFileSize(entry['size_quota'] - entry['size_usage'], 'GB');
+					});
+				})
+			}, 5 * 60 * 1000);
+
+			diskUsageUpdater.startImmediate();
 
 			router.add(/^\/$/, async (root) => {
 				const collections = await fetchJSON('/collections/');
