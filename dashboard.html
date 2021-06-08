@@ -3,9 +3,23 @@
 	<head>
 		<title>Paracrawl dashboard</title>
 		<style>
+			html {
+				--background-color: #fff;
+				--text-color: #000;
+			}
+
+			@media (prefers-color-scheme: dark) {
+				html {
+					--background-color: #000;
+					--text-color: #ccc;
+				}	
+			}
+
 			body {
 				font:  14px/18px sans-serif;
 				margin-bottom: 2em;
+				background: var(--background-color);
+				color: var(--text-color);
 			}
 
 			#job-grid	{
@@ -18,6 +32,8 @@
 				text-decoration: none;
 				padding: 0 0.25em;
 				margin: 0.125em 0;
+				color: rgba(255, 255, 255, 0.8);
+				background: rgba(0, 0, 0, 0.5);
 			}
 
 			#job-grid .job:hover {
@@ -27,13 +43,11 @@
 			#job-grid .job.completed,
 			#job-grid .progress-bar .completed {
 				background: #0a0;
-				color: white;
 			}
 
 			#job-grid .job.pending,
 			#job-grid .progress-bar .pending {
 				background: #3cf;
-				color: white;
 			}
 
 			#job-grid .job.running,
@@ -44,25 +58,22 @@
 			#job-grid .job.cancelled,
 			#job-grid .progress-bar .cancelled {
 				background: #333;
-				color: white;
 			}
 
 			#job-grid .job.failed,
 			#job-grid .progress-bar .failed {
 				background: #c33;
-				color: white;
 			}
 
 			#job-grid .job.hold,
 			#job-grid .progress-bar .hold {
 				background: #c3c;
-				color: white;
 			}
 
 			#job-grid thead th {
 				position: sticky;
 				top: 0;
-				background: white;
+				background: var(--background-color);
 				z-index: 10;
 			}
 
@@ -93,7 +104,7 @@
 			}
 
 			#job-grid tr:nth-child(even) {
-				background: #eee;
+				background: rgba(128, 128, 128, 0.2);
 			}
 
 			#job-grid .unavailable {
@@ -152,7 +163,7 @@
 				bottom: 0;
 				height: 4px;
 				font: 4px/4px sans-serif;
-				background: white;
+				background: rgba(0, 0, 0, 0.5);
 				white-space: nowrap;
 				overflow: hidden;
 			}
@@ -222,11 +233,13 @@
 				overflow: hidden;
 			}
 
-			.lang-cs td,
-			.lang-de td,
-			.lang-fi td,
-			.lang-ro td,
-			.lang-lv td {
+			/* Highlight priority rows */
+
+			tr.lang-cs > *,
+			tr.lang-de > *,
+			tr.lang-fi > *,
+			tr.lang-ro > *,
+			tr.lang-lv > * {
 				background: rgba(0, 255, 255, 0.1);
 			}
 
@@ -235,8 +248,8 @@
 				bottom: 0;
 				left: 0;
 				right: 0;
-				background: white;
-				border-top: 1px solid #ccc;
+				background: inherit;
+				border-top: 1px solid rgba(128, 128, 128, 0.5);
 				z-index: 10;
 				line-height: 2em;
 				padding:  0 0.25em;
