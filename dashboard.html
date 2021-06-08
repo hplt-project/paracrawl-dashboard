@@ -255,7 +255,6 @@
 				padding:  0 0.25em;
 
 				display: flex;
-				justify-content: space-between;
 			}
 
 			#status-bar .status-group {
@@ -263,9 +262,14 @@
 				display: flex;
 			}
 
+			#status-bar .spacer {
+				flex: 1 1 auto;
+			}
+
 			#status-bar .status-group .status-widget {
 				flex: 0 0 auto;
 				margin: 0 0.25em;
+				padding: 0 0.25em;
 			}
 
 			#status-bar .status-group .label {
@@ -274,6 +278,35 @@
 
 			#status-bar .status-group .label::after {
 				content: ': ';
+			}
+
+			@keyframes placeHolderShimmer {
+				0% {
+					background-position: -500px 0
+				}
+				100% {
+					background-position: 500px 0
+				}
+			}
+
+			#status-bar .loading {
+				animation-duration: 2s;
+				animation-fill-mode: forwards;
+				animation-iteration-count: infinite;
+				animation-name: placeHolderShimmer;
+				animation-timing-function: linear;
+				background-image: linear-gradient(to right,
+					rgba(128, 128, 128, 0.0) 0%,
+					rgba(128, 128, 128, 0.1) 4%,
+					rgba(128, 128, 128, 0.4) 25%,
+					rgba(128, 128, 128, 0.1) 36%,
+					rgba(128, 128, 128, 0.0) 50%);
+				background-size: 500px 100%;
+				-webkit-backface-visibility: hidden
+			}
+
+			#status-bar .loading .value {
+				opacity: 0.6;
 			}
 		</style>
 	</head>
@@ -293,6 +326,11 @@
 				return x;
 			}
 
+			/**
+			 * Wrapper around an array that emits _add_ and _change_ events. The
+			 * items themselves will also be event targets that emit _change_ and
+			 * _delete_ events.
+			 */
 			class List extends EventTarget {
 				constructor(keyFn) {
 					super();
@@ -300,13 +338,13 @@
 					this._index = new Map();
 				}
 
-				add(item) {
+				_add(item) {
 					const key = this._keyFn(item);
 					
 					if (this._index.has(key)) {
 						const current = this._index.get(key);
 						assign(current, item);
-						current.dispatchEvent(new CustomEvent('update', {detail: current}));
+						current.dispatchEvent(new CustomEvent('change', {detail: current}));
 					} else {
 						const current = new EventTarget();
 						this._index.set(key, current);
@@ -315,27 +353,52 @@
 					}
 				}
 
-				delete(item) {
+				_delete(item) {
 					this._index.delete(this._keyFn(item));
 					current.dispatchEvent(new CustomEvent('delete', {detail: item}))
 				}
 
+				add(item) {
+					this._add(item);
+					this.dispatchEvent(new CustomEvent('change'));
+				}
+
+				delete(item) {
+					this._delete(item);
+					this.dispatchEvent(new CustomEvent('change'));
+				}
+
 				update(items) {
-					items.forEach(item => this.add(item));
+					let changed = false;
+
+					items.forEach(item => {
+						this._add(item)
+						changed = true;
+					});
+
+					if (changed)
+						this.dispatchEvent(new CustomEvent('change'));
 				} 
 
 				sync(items) {
 					const visited = new Set();
+					let changed = false;
 
 					items.forEach(item => {
 						visited.add(this._keyFn(item));
-						this.add(item);
+						this._add(item);
+						changed = true;
 					});
 
 					this._index.forEach((item, key) => {
-						if (!visited.has(this._keyFn(key)))
-							this.delete(item);
+						if (!visited.has(this._keyFn(key))) {
+							this._delete(item);
+							changed = true;
+						}
 					});
+
+					if (changed)
+						this.dispatchEvent(new CustomEvent('change'));
 				}
 
 				find(key) {
@@ -351,6 +414,11 @@
 				}
 			}
 
+			/**
+			 * Emits _start_ and _stop_ when started and stopped. Emits _trigger_
+			 * when the callback function is called with the promise of the callback
+			 * function.
+			 */
 			class Interval extends EventTarget {
 				constructor(fn, interval) {
 					super();
@@ -377,16 +445,16 @@
 					this.timeout = null;
 				}
 
-				async trigger() {
-					try {
-						await this.fn();
-					} catch (e) {
-						this.dispatchEvent(new CustomEvent('error', {detail: e}));
-					}
+				trigger() {
+					const promise = this.fn();
+					
+					this.dispatchEvent(new CustomEvent('trigger', {detail: promise}));
 					
 					// Only schedule again if we didn't get stopped while waiting for fn.
-					if (this.timeout !== null)
-						this.start();
+					promise.then(() => {
+						if (this.timeout !== null)
+							this.start();
+					});
 				}
 			}
 
@@ -762,7 +830,7 @@
 					list.querySelectorAll('.job').forEach(el => {
 						Object.keys(counts).forEach(className => {
 							if (el.classList.contains(className))
-								counts[className] += 1;
+								counts[className] += 1; 
 						})
 					});
 
@@ -827,7 +895,7 @@
 
 				render();
 
-				job.addEventListener('update', render);
+				job.addEventListener('change', render);
 
 				job.addEventListener('delete', () => {
 					link.parentNode.removeChild(link)
@@ -851,6 +919,17 @@
 			function tryParseInt(val, fallback) {
 				const int = parseInt(val, 10);
 				return isNaN(int) ? fallback : int;
+			}
+
+			function listenToLoadingStatus(interval, el) {
+				interval.addEventListener('trigger', async ({detail}) => {
+					el.classList.toggle('loading', true)
+					try {
+						await detail;
+					} finally {
+						el.classList.toggle('loading', false);
+					}
+				});
 			}
 
 			function updateJobCounts(root, index) {
@@ -883,16 +962,6 @@
 
 			let lastUpdate = '';
 			
-			// After that prefer just the queue updates
-			const updater = new Interval(async () => {
-				return fetchJSON(lastUpdate ? '/jobs/delta/' + lastUpdate : '/jobs/').then(delta => {
-					index.update(delta.jobs);
-					lastUpdate = delta.timestamp;	
-				});
-			}, 60 * 1000);
-
-			updater.startImmediate();
-
 			const jobStatusBar = h('div', {'id': 'job-status', 'className': 'status-group'},
 				['pending', 'hold', 'running', 'cores'].map(state => {
 					return h('div', {'className': 'status-widget', 'dataset': {state}}, [
@@ -901,8 +970,36 @@
 					]);
 				}));
 
-			const updateCounts = debounce(updateJobCounts.bind(null, jobStatusBar, index));
-			index.addEventListener('add', updateCounts);
+			// After that prefer just the queue updates
+			const updater = new Interval(async () => {
+				const delta = await fetchJSON(lastUpdate ? '/jobs/delta/' + lastUpdate : '/jobs/');
+				index.update(delta.jobs);
+				lastUpdate = delta.timestamp;
+			}, 60 * 1000);
+
+			listenToLoadingStatus(updater, jobStatusBar);
+
+			index.addEventListener('change', updateJobCounts.bind(null, jobStatusBar, index));
+
+			updater.startImmediate();
+
+			jobStatusBar.addEventListener('click', () => updater.startImmediate());
+
+			const accountStatusBar = h('div', {'id': 'account-status', 'className': 'status-group'}, [
+				h('div', {'className': 'status-widget'}, [
+						h('span', {'className': 'label'}, ['Core hours remaining']),
+						h('span', {'className': 'value remaining core-hours'}, ['0'])
+				])
+			]);
+
+			const accountUpdater = new Interval(async () => {
+				const balance = await fetchJSON('/balance/');
+				const format = new Intl.NumberFormat();
+				accountStatusBar.querySelector('.remaining.core-hours').textContent = format.format(balance.balance);
+			}, 30 * 60 * 1000)
+			listenToLoadingStatus(accountUpdater, accountStatusBar);
+			accountUpdater.startImmediate();
+			accountStatusBar.addEventListener('click', () => accountUpdater.startImmediate());
 
 			const diskStatusBar = h('div', {'id': 'disk-status', 'className': 'status-group'},
 				['rds-48gU72OtDNY'].map(proj => {
@@ -914,20 +1011,23 @@
 
 			document.body.appendChild(h('div', {'id': 'status-bar'}, [
 				jobStatusBar,
+				h('div', {'className': 'spacer'}),
+				accountStatusBar,
 				diskStatusBar
 			]));
 
 			const diskUsageUpdater = new Interval(async () => {
-				return fetchJSON('/quota/').then(quota => {
-					diskStatusBar.querySelectorAll('.status-widget').forEach(el => {
-						const proj = el.dataset.proj;
-						const entry = quota.find(entry => entry['proj'] === proj);
-						el.querySelector('.remaining').textContent = formatFileSize(entry['size_quota'] - entry['size_usage'], 'GB');
-					});
-				})
+				const quota = await fetchJSON('/quota/');
+				diskStatusBar.querySelectorAll('.status-widget').forEach(el => {
+					const proj = el.dataset.proj;
+					const entry = quota.find(entry => entry['proj'] === proj);
+					el.querySelector('.remaining').textContent = formatFileSize(entry['size_quota'] - entry['size_usage'], 'GB');
+				});
 			}, 5 * 60 * 1000);
 
+			listenToLoadingStatus(diskUsageUpdater, diskStatusBar);
 			diskUsageUpdater.startImmediate();
+			diskStatusBar.addEventListener('click', () => diskUsageUpdater.startImmediate());
 
 			router.add(/^\/$/, async (root) => {
 				const collections = await fetchJSON('/collections/');
@@ -993,10 +1093,10 @@
 					update({detail:job});
 
 					// Update every time the job changes
-					job.addEventListener('update', update);
+					job.addEventListener('change', update);
 
 					// but stop updating once this page is no longer visible.
-					return () => root.removeEventListener('update', update);
+					return () => root.removeEventListener('change', update);
 				}
 
 				root.appendChild(h('section', {className: 'props'}, [
