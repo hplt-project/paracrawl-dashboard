@@ -296,6 +296,13 @@ def read_collections():
 		collections[collection] = Collection(path)
 	return collections
 
+
+def read_config_var(varname):
+	output = subprocess.check_output(['bash',
+		'--init-file', 'env/init.sh',
+		'-c', 'source config.sh; echo ${{{}}}'.format(varname)])
+	return output.decode().strip()
+
 slurm = Slurm()
 
 # collections = read_collections()
@@ -489,7 +496,7 @@ def show_stream(request, stream, job):
 	return FileResponse(Tailer(job[mapping[stream]]))
 
 
-def quota():
+def disk_quota():
 	lines = subprocess.check_output("quota").decode().splitlines()
 
 	columns = [
@@ -508,9 +515,22 @@ def quota():
 			}
 
 
+def slurm_balance(account):
+	return int(subprocess.check_output(['sbank', 'balance', 'statement', '-u', '-a', account]))
+
+
 @app.route('/quota/')
 def list_quota(request):
-	return send_json(list(quota()))
+	return send_json(list(disk_quota()))
+
+
+@app.route('/balance/')
+def list_balance(request):
+	account_name = read_config_var('SBATCH_ACCOUNT')
+	return send_json({
+		'account': account_name,
+		'balance': slurm_balance(account_name)
+	})
 
 
 if __name__ == "__main__":        
