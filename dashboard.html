@@ -316,6 +316,11 @@
 			#status-bar .loading .value {
 				opacity: 0.6;
 			}
+
+			.selection-box {
+				position: absolute;
+				outline: 1px solid blue;
+			}
 		</style>
 	</head>
 	<body>
@@ -1330,6 +1335,115 @@
 					index.update(index.map(job => ({id: job.id, selected: false})));
 				}
 			});
+
+			function getBoundingRect(el) {
+				const rect = el.getBoundingClientRect();
+				return {
+					x: window.scrollX + rect.x,
+					y: window.scrollY + rect.y,
+					width: rect.right - rect.left,
+					height: rect.bottom - rect.top
+				};
+			}
+
+			function intersects(a, b) {
+				return !(
+					a.x + a.width < b.x || 
+					a.x > b.x + b.width ||
+					a.y + a.height < b.y ||
+					a.y > b.y + b.height
+				);
+			}
+
+			function diff(a, b) {
+				const left = [], right = [];
+				for (let [key, val] of a)
+					if (!b.has(key))
+						left.push(val);
+
+				for (let [key, val] of b)
+					if (!a.has(key))
+						right.push(val)
+
+				return {left, right}
+			}
+
+			// Drag & select
+			listen('mousedown', '#job-grid', (el, e) => {
+				let box = h('div', {'className': 'selection-box'});
+				let start = {
+					x: window.scrollX + e.clientX,
+					y: window.scrollY + e.clientY
+				};
+
+				const selectables = Array.from(
+					document.querySelectorAll('.job, .job-array h3'),
+					el => ({el, rect: getBoundingRect(el) }))
+					.filter(({rect}) => rect.width > 0 && rect.height > 0);
+
+				let selected = new Map();
+
+				function move(e) {
+					e.preventDefault();
+
+					// Drawn rect
+					const rect = {
+						x:      Math.min(window.scrollX + e.clientX, start.x),
+						y:      Math.min(window.scrollY + e.clientY, start.y),
+						width:  Math.abs(window.scrollX + e.clientX - start.x),
+						height: Math.abs(window.scrollY + e.clientY - start.y)
+					};
+
+					// If we're fresh out of mousedown
+					if (!box.parentNode) {
+						// and haven't moved a lot yet, just ignore the movement.
+						if (rect.width < 5 && rect.height < 5)
+							return;
+
+						// Otherwise, start drawing the box. No way back to onclick now!
+						document.body.append(box);
+					}
+
+					// Update visual rect
+					box.style.left   = `${rect.x}px`;
+					box.style.top    = `${rect.y}px`;
+					box.style.width  = `${rect.width}px`;
+					box.style.height = `${rect.height}px`;
+
+					// Figure out jobs that intersect rect
+					const jobs = new Map(selectables
+						.filter(selectable => intersects(selectable.rect, rect))
+						.reduce((acc, selectable) => acc.concat(getJobsByElement(selectable.el)), [])
+						.map(job => [job.id, job]));
+
+					// Difference between current selection and intersecting jobs
+					const {left, right} = diff(selected, jobs);
+
+					// Update current selection
+					index.update([
+						...left.map(job => ({id: job.id, selected: false})),
+						...right.map(job => ({id: job.id, selected: true}))
+					]);
+
+					selected = jobs;
+				}
+
+				document.addEventListener('mousemove', move);
+				document.addEventListener('mouseup', e => {
+					document.removeEventListener('mousemove', move);
+					if (box.parentNode) {
+						// Prevent selecting text
+						e.preventDefault();
+
+						// Prevent next onclick
+						document.addEventListener('click',
+							e => e.stopPropagation(),
+							{capture: true, once: true});
+						
+						document.body.removeChild(box);
+					}
+				}, {once: true});
+			})
 
 			updater.startImmediate();
 
