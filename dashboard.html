@@ -1356,16 +1356,14 @@
 			}
 
 			function diff(a, b) {
-				const left = [], right = [];
-				for (let [key, val] of a)
+				// use array because Set does not have map()
+				const difference = [];
+
+				for (let key of a)
 					if (!b.has(key))
-						left.push(val);
+						difference.push(key)
 
-				for (let [key, val] of b)
-					if (!a.has(key))
-						right.push(val)
-
-				return {left, right}
+				return difference;
 			}
 
 			// Drag & select
@@ -1381,7 +1379,7 @@
 					el => ({el, rect: getBoundingRect(el) }))
 					.filter(({rect}) => rect.width > 0 && rect.height > 0);
 
-				let selected = new Map();
+				let selected = new Set(e.metaKey ? [] : selection.map(job => job.id));
 
 				function move(e) {
 					e.preventDefault();
@@ -1411,18 +1409,15 @@
 					box.style.height = `${rect.height}px`;
 
 					// Figure out jobs that intersect rect
-					const jobs = new Map(selectables
+					const jobs = new Set(selectables
 						.filter(selectable => intersects(selectable.rect, rect))
 						.reduce((acc, selectable) => acc.concat(getJobsByElement(selectable.el)), [])
-						.map(job => [job.id, job]));
-
-					// Difference between current selection and intersecting jobs
-					const {left, right} = diff(selected, jobs);
+						.map(job => job.id));
 
 					// Update current selection
 					index.update([
-						...left.map(job => ({id: job.id, selected: false})),
-						...right.map(job => ({id: job.id, selected: true}))
+						...diff(selected, jobs).map(id => ({id, selected: false})),
+						...diff(jobs, selected).map(id => ({id, selected: true}))
 					]);
 
 					selected = jobs;
