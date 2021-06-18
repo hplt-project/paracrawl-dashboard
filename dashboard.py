@@ -26,7 +26,7 @@ class Job(dict):
 		super().__init__(*args, **kwargs)
 		
 		if 'JobName' in self:
-			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|clean)-([a-z]{2})-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean|)-([a-z]{2})-([a-z]+[a-z0-9\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], match[3]
 			elif match := re.match(r'^(reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered)-([a-z]{2})$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], None
