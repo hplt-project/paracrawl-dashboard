@@ -1017,13 +1017,34 @@
 				return `${filesize.toFixed(1)} ${units[current]}`;
 			}
 
+			const CAPITALIZED = {
+				'cpus': 'CPUs',
+				'gpus': 'GPUs',
+			};
+
 			function capitalize(str) {
+				if (str in CAPITALIZED)
+					return CAPITALIZED[str];
+
 				return str.split(' ').map(word => word.substr(0, 1).toUpperCase() + word.substr(1)).join(' ');
 			}
 
-			function tryParseInt(val, fallback) {
-				const int = parseInt(val, 10);
-				return isNaN(int) ? fallback : int;
+			function tryParseInt(str, fallback, pattern) {
+				let int = NaN;
+
+				if (typeof str === 'number') {
+					int = str;
+				} else if (typeof str == 'string') {
+					if (pattern) {
+						const match = str.match(pattern)
+						if (match === null)
+							return fallback
+						str = match[1];
+					}
+					int = parseInt(str, 10);
+				}
+
+				return isNaN(int) ? fallback : int;	
 			}
 
 			function listenToLoadingStatus(interval, el) {
@@ -1048,7 +1069,8 @@
 					timeout: 0,
 					failed: 0,
 					out_of_memory: 0,
-					cores: 0
+					cores: 0,
+					gpus: 0
 				};
 
 				index.forEach(job => {
@@ -1063,6 +1085,7 @@
 						counts['out_of_memory'] += 'State' in job.slurm && job.slurm['State'] == 'OUT_OF_MEMORY' ? 1 : 0;
 						counts['cancelled']     += 'State' in job.slurm && job.slurm['State'].startsWith('CANCELLED') ? 1 : 0;
 						counts['cores']         += 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? tryParseInt(job.slurm['AllocCPUS'], 0) : 0;
+						counts['gpus']					+= 'State' in job.slurm && job.slurm['State'] == 'RUNNING' ? tryParseInt(job.slurm['AllocGRES'], 0, /gpu:(\d+)/) : 0;
 					}
 				});
 
@@ -1091,7 +1114,7 @@
 			}, 60 * 1000);
 
 			const jobStatusBar = h('div', {'id': 'job-status', 'className': 'status-group'},
-				['pending', 'hold', 'running', 'cores'].map(state => {
+				['pending', 'hold', 'running', 'cores', 'gpus'].map(state => {
 					return h('div', {'className': 'status-widget', 'dataset': {state}}, [
 						h('span', {'className': 'label state'}, [capitalize(state)]),
 						h('span', {'className': 'value count'}, ['0'])
@@ -1105,7 +1128,7 @@
 			jobStatusBar.addEventListener('click', () => updater.startImmediate());
 
 			const selectionStatusBar = h('div', {'id': 'selection-status', 'className': 'status-group', 'hidden': true}, [
-				...['selected', 'pending', 'hold', 'running', 'completed', 'timeout', 'failed', 'cancelled', 'cores'].map(state => {
+				...['selected', 'pending', 'hold', 'running', 'completed', 'timeout', 'failed', 'cancelled', 'cores', 'gpus'].map(state => {
 					return h('div', {'className': 'status-widget', 'dataset': {state}}, [
 						h('span', {'className': 'label state'}, [capitalize(state)]),
 						h('span', {'className': 'value count'}, ['0'])
@@ -1114,6 +1137,10 @@
 				h('div', {'className': 'status-widget'}, [
 					h('span', {'className': 'label'}, ['Core hours used']),
 					h('span', {'className': 'value used core-hours'}, ['0'])
+				]),
+				h('div', {'className': 'status-widget'}, [
+					h('span', {'className': 'label'}, ['GPU hours used']),
+					h('span', {'className': 'value used gpu-hours'}, ['0'])
 				]),
 				h('button', {'className': 'clear-selection-button'}, [
 					'Clear'
@@ -1131,6 +1158,9 @@
 
 				const seconds = selection.reduce((acc, job) => acc + parseInt(job.slurm['CPUTimeRAW'] || '0'), 0);
 				selectionStatusBar.querySelector('.value.used.core-hours').textContent = coreHoursFormat.format(seconds / 3600);
+
+				const gpuSeconds = selection.reduce((acc, job) => acc + parseInt(job.slurm['ElapsedRaw'] || '0') * tryParseInt(job.slurm['AllocGRES'], 0, /gpu:(\d+)/), 0);
+				selectionStatusBar.querySelector('.value.used.gpu-hours').textContent = coreHoursFormat.format(gpuSeconds / 3600);				
 
 				selectionStatusBar.hidden = selection.length == 0;
 				jobStatusBar.hidden = selection.length != 0;
