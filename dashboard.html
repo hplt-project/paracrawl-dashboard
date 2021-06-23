@@ -1406,6 +1406,10 @@
 
 			// Drag & select
 			listen('mousedown', '#job-grid', (el, e) => {
+				// Only act on primary button (not context menu or navigation)
+				if (e.button != 0)
+					return;
+
 				let box = h('div', {'className': 'selection-box'});
 				let start = {
 					x: window.scrollX + e.clientX,
