@@ -1172,14 +1172,21 @@
 
 			const accountStatusBar = h('div', {'id': 'account-status', 'className': 'status-group'}, [
 				h('div', {'className': 'status-widget'}, [
-						h('span', {'className': 'label'}, ['Core hours remaining']),
-						h('span', {'className': 'value remaining core-hours'}, ['0'])
+						h('span', {'className': 'label'}, ['Remaining Core hours']),
+						h('span', {'className': 'value remaining core-hours', 'dataset': {'account': 't2-cs119-cpu'}})
+				]),
+				h('div', {'className': 'status-widget'}, [
+						h('span', {'className': 'label'}, ['GPU hours']),
+						h('span', {'className': 'value remaining core-hours', 'dataset': {'account': 't2-cs119-gpu'}})
 				])
 			]);
 
 			const accountUpdater = new Interval(async () => {
 				const balance = await fetchJSON('/balance/');
-				accountStatusBar.querySelector('.remaining.core-hours').textContent = coreHoursFormat.format(balance.balance);
+				accountStatusBar.querySelectorAll('.remaining.core-hours').forEach(el => {
+					const account = balance.find(account => account.account == el.dataset.account);
+					el.textContent = account ? coreHoursFormat.format(account.balance) : '';
+				});
 			}, 30 * 60 * 1000);
 			listenToLoadingStatus(accountUpdater, accountStatusBar);
 			accountUpdater.startImmediate();

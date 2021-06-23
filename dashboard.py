@@ -526,11 +526,13 @@ def list_quota(request):
 
 @app.route('/balance/')
 def list_balance(request):
-	account_name = read_config_var('SBATCH_ACCOUNT')
-	return send_json({
-		'account': account_name,
-		'balance': slurm_balance(account_name)
-	})
+	# account_name = read_config_var('SBATCH_ACCOUNT')
+	return send_json([
+		{
+			'account': account_name,
+			'balance': slurm_balance(account_name)
+		} for account_name in ['t2-cs119-cpu', 't2-cs119-gpu']
+	])
 
 
 if __name__ == "__main__":        
