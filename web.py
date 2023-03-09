@@ -6,7 +6,7 @@ import sys
 import mimetypes
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Set, Callable, Type, Any, Dict, List, Optional, Tuple, Optional, Pattern, TypeVar, Type
+from typing import Set, Callable, Type, Any, Dict, Optional, Tuple, Pattern
 from dataclasses import dataclass
 from pprint import pprint, pformat
 from collections import defaultdict
@@ -168,8 +168,7 @@ class Route:
 	path_placeholders: Dict[str,URLConverter]
 
 
-# Fun = TypeVar('Fun', Callable[..., Response])
-Fun = TypeVar('Fun')
+Fun = Callable[..., Response]
 
 class Application:
 	def __init__(self):
@@ -200,7 +199,7 @@ class Application:
 			return fn
 		return register
 
-	def compile_route(self, path_pattern: str, **kwargs) -> Pattern[str]:
+	def compile_route(self, path_pattern: str, **kwargs) -> Route:
 		path_expression = ''
 		path_format = ''
 		path_placeholders = {}
@@ -222,14 +221,14 @@ class Application:
 			path_placeholders=path_placeholders,
 			**kwargs)
 
-	def match_route(self, path: str) -> Tuple[Optional[Route], Optional[Dict[str,Any]]]:
+	def match_route(self, path: str) -> Tuple[Optional[Route], Dict[str,Any]]:
 		for route in self.routes:
 			match = re.match(route.path_expression, path)
 			if match:
 				return route, {name: route.path_placeholders[name].to_python(value) for name, value in match.groupdict().items()}
-		return None, None
+		return None, dict()
 
-	def url_for(self, name: str, **kwargs) -> str:
+	def url_for(self, name: str, **kwargs) -> Optional[str]:
 		placeholders = set(key for key, val in kwargs.items() if val is not None)
 		for route in sorted(self.routes, reverse=True, key=lambda route: len(route.path_placeholders)):
 			if route.name == name and set(route.path_placeholders) <= placeholders:
@@ -245,7 +244,7 @@ class Application:
 
 
 class RequestHandler(BaseHTTPRequestHandler):
-	def __init__(self, *args, app=None, **kwargs):
+	def __init__(self, *args, app:Application, **kwargs):
 		self.app = app
 		super().__init__(*args, **kwargs)
 
