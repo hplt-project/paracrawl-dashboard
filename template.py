@@ -185,9 +185,13 @@ def compile(root, text):
 
 
 class Template(Node):
-	def __init__(self, template):
+	def __init__(self, template, **kwargs):
 		super().__init__()
+		self.args = kwargs
 		compile(self, template)
+
+	def format(self, **kwargs) -> str:
+		return super().format(**(self.args | kwargs))
 
 
 if __name__ == '__main__':
