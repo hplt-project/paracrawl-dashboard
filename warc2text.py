@@ -154,7 +154,7 @@ def count_domains(path:str) -> Counter:
 def read_records(model:str, lang:str) -> Iterable[Record]:
 	with gzip.open(os.path.join(ROOT, model, lang, 'text.gz')) as fh_text, gzip.open(os.path.join(ROOT, model, lang, 'url.gz')) as fh_url:
 		for index, text, url in zip(count(), fh_text, fh_url):
-			yield Record(index, b64decode(text.rstrip()).decode().split('\n'), url.rstrip().decode())
+			yield Record(index, b64decode(text.rstrip()).decode('utf-8', 'ignore').split('\n'), url.rstrip().decode())
 
 
 @app.route('/')
