@@ -79,6 +79,7 @@
 				top: 0;
 				background: var(--background-color);
 				z-index: 10;
+				border-bottom: 1px solid rgba(128, 128, 128, 0.5);
 			}
 
 			#job-grid td.completed {
@@ -239,6 +240,36 @@
 				white-space: nowrap;
 				text-overflow: ellipsis;
 				overflow: hidden;
+			}
+
+			.page h1 small {
+				padding-left: 0.5em;
+				opacity: 0.5;
+			}
+
+			.page .slurm-node::before {
+				content: 'on ';
+			}
+
+			.page h2 {
+				position: sticky;
+				top: 0;
+				background-color: var(--background-color);
+				margin: 0.75em 0 0 0;
+				padding: 0.25em 0;
+				border-bottom: 1px solid rgba(128, 128, 128, 0.5);
+			}
+
+			.page .toc {
+				position: fixed;
+				top: 0;
+				right: 0.5em;
+				z-index: 1;
+			}
+
+			.page .toc li {
+				display: inline-block;
+				padding: 0 0.25em;
 			}
 
 			/* Highlight priority rows */
@@ -887,7 +918,7 @@
 			}
 
 			function formatJobArray(job) {
-				const match = job.slurm['JobName'].match(/(warc2text|reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered|shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean)-/)
+				const match = job.slurm['JobName'].match(/(warc2text|pdf2warc|reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered|shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean)-/)
 				return match && match[1] || job.slurm['JobName']
 			}
 
@@ -1141,9 +1172,6 @@
 				h('div', {'className': 'status-widget'}, [
 					h('span', {'className': 'label'}, ['GPU hours used']),
 					h('span', {'className': 'value used gpu-hours'}, ['0'])
-				]),
-				h('button', {'className': 'clear-selection-button'}, [
-					'Clear'
 				])
 			]);
 
@@ -1164,10 +1192,6 @@
 
 				selectionStatusBar.hidden = selection.length == 0;
 				jobStatusBar.hidden = selection.length != 0;
-			});
-
-			selectionStatusBar.querySelector('.clear-selection-button').addEventListener('click', e => {
-				index.update(selection.map(job => ({id: job.id, selected: false})));
 			});
 
 			const accountStatusBar = h('div', {'id': 'account-status', 'className': 'status-group'}, [
@@ -1249,7 +1273,9 @@
 					.then(response => response.json())
 					.then(job => index.add(job));
 
-				root.appendChild(h('h1', {}, [job.slurm['JobId']]));
+				const slurmNodeLabel = h('small', {className: 'slurm-node'});
+
+				root.appendChild(h('h1', {}, [job.slurm['JobId'], slurmNodeLabel]));
 
 				function live(el, render) {
 					root.addEventListener('show', e => {
@@ -1259,12 +1285,18 @@
 					return el;
 				}
 
-				root.appendChild(h('section', {className: 'stdout'}, [
+				root.appendChild(h('ol', {className: 'toc'}, [
+					['StdOut', `#${job_id}-stdout`],
+					['StdErr', `#${job_id}-stderr`],
+					['Properties', `#${job_id}-props`]
+				].map(([label, href]) => h('li', {}, [h('a', {href}, [label])]))));
+
+				root.appendChild(h('section', {id: `${job_id}-stdout`, className: 'stdout'}, [
 					h('h2', {}, ['StdOut']),
 					live(h('pre'), el => streamToElement(job['stdout'], el))
 				]));
 
-				root.appendChild(h('section', {className: 'stderr'}, [
+				root.appendChild(h('section', {id: `${job_id}-stderr`, className: 'stderr'}, [
 					h('h2', {}, ['StdErr']),
 					live(h('pre'), el => streamToElement(job['stderr'], el))
 				]));
@@ -1279,6 +1311,9 @@
 						}).flat(1));
 						el.parentNode.replaceChild(updated, el);
 						el = updated;
+
+						if ('NODELIST' in detail.slurm)
+							slurmNodeLabel.textContent = detail.slurm['NODELIST'];
 					}
 
 					// Update now (and every time this page becomes visible)
@@ -1291,7 +1326,7 @@
 					return () => root.removeEventListener('change', update);
 				}
 
-				root.appendChild(h('section', {className: 'props'}, [
+				root.appendChild(h('section', {id: `${job_id}-props`, className: 'props'}, [
 					h('h2', {}, ['Properties']),
 					live(h('dl'), render)
 				]));

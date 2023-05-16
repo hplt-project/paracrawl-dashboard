@@ -30,7 +30,7 @@ class Job(dict):
 				self.step, self.language, self.collection = match[1], match[2], match[3]
 			elif match := re.match(r'^(reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered)-([a-z]{2})$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], None
-			elif match := re.match(r'^(warc2text)-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+			elif match := re.match(r'^(warc2text|pdf2warc)-([a-z]+[a-z0-9\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], None, match[2]
 
 		if 'ArrayTaskId' in self and self['ArrayTaskId'] == 'N/A':
@@ -64,12 +64,12 @@ class Slurm:
 			if not line_job_id.isnumeric():
 				continue
 			if timestamp.isnumeric() and timestamp >= since_timestamp:
-				yield from self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp}, arguments.split(' '))
+				yield from self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp, 'State': 'PENDING'}, arguments.split(' '))
 
 	def current_jobs(self):
 		output = subprocess.check_output(['squeue',
 			'--user', os.getenv('USER'),
-			'--format', '%A|%i|%K|%F|%C|%b|%j|%P|%r|%u|%y|%T|%M|%b|%N'])
+			'--format', '%i|%K|%F|%C|%b|%j|%P|%r|%u|%y|%T|%M|%b|%N'])
 		lines = output.decode().splitlines()
 		mapping = {
 			'JOBID': 'JobId',
@@ -144,7 +144,7 @@ class Slurm:
 		if include_completed:
 			sources.append(self.accounting_jobs(['--jobs', ','.join(array_job_ids)]))
 
-		sources.append(self.current_jobs())		
+		sources.append(self.current_jobs())
 
 		for job in chain(*sources):
 			try:
@@ -172,7 +172,7 @@ class Slurm:
 					continue
 				if line_job_id != job_id:
 					continue
-				for job in self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp}, arguments.split(' ')):
+				for job in self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp, 'State': 'PENDING'}, arguments.split(' ')):
 					if match(job_pattern, job):
 						return job
 
@@ -323,7 +323,7 @@ class JobList:
 			if job['JobId'] in self.jobs:
 				current, current_timestamp = self.jobs[job['JobId']]
 				if set(job.items()) - set(current.items()):
-					self.jobs[job['JobId']] = (type(current)({**current, **job}), job_timestamp)
+					self.jobs[job['JobId']] = (type(current)({**current, **job}), current_timestamp if job_timestamp is None else job_timestamp)
 			else:
 				self.jobs[job['JobId']] = (job, job_timestamp)
 
@@ -333,11 +333,11 @@ class JobList:
 	def with_timestamp(self):
 		return self.jobs.values()
 
-	def filter(self, op):
+	def filter(self, op, timestamp=None):
 		job_list = self.__class__()
 		job_list.jobs = {
-			job_id: (job, timestamp)
-			for job_id, (job, timestamp) in self.jobs.items()
+			job_id: (job, job_timestamp if timestamp is None else timestamp)
+			for job_id, (job, job_timestamp) in self.jobs.items()
 			if op(job)
 		}
 		return job_list
@@ -349,11 +349,18 @@ class JobList:
 		return self.jobs.keys()
 
 
+def add_jobs_to_set(job_id_set, jobs):
+	for job in jobs:
+		job_id_set.add(job['JobId'])
+		yield job
+
+
 class State:
 	STALE_STATES = {
 		'COMPLETED',
 		'CANCELLED',
-		'FAILED'
+		'FAILED',
+		'TIMEOUT'
 	}
 
 	def __init__(self, since):
@@ -364,18 +371,30 @@ class State:
 		# Active jobs (that we need updates on)
 		active_jobs = self.jobs.filter(lambda job: 'State' not in job or job['State'] not in self.STALE_STATES)
 
-		last_update = datetime.now()
+		# List of seen job ids in this update. Any job in active_jobs that's not also in seen_jobs is not active.
+		seen_jobs = set()
 
 		# Add any new scheduled jobs
-		active_jobs.update(slurm.scheduled_jobs(since=self.last_update), timestamp=last_update)
+		active_jobs.update(add_jobs_to_set(seen_jobs, slurm.scheduled_jobs(since=self.last_update)))
 
 		# Query latest status on these jobs
-		active_jobs.update(slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())]), timestamp=last_update)
+		active_jobs.update(add_jobs_to_set(seen_jobs, slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())])))
 
 		# Query active jobs
-		active_jobs.update(slurm.current_jobs(), timestamp=last_update);
+		active_jobs.update(add_jobs_to_set(seen_jobs, slurm.current_jobs()))
 
-		self.jobs.update(active_jobs)
+		# Remove dead jobs
+		active_jobs.update([
+			{'JobId': job['JobId'], 'State': 'CANCELLED'}
+			for job in active_jobs
+			if job['JobId'] not in seen_jobs
+		])
+
+		# Update history
+		last_update = datetime.now()
+
+		self.jobs.update(active_jobs, timestamp=last_update)
+
 		self.last_update = last_update
 
 		return active_jobs
@@ -384,7 +403,7 @@ class State:
 		return self.jobs.get(job_id)
 
 
-state = State(since=datetime.now() - timedelta(days=7))
+state = State(since=datetime.now() - timedelta(days=365))
 
 
 @app.url_type('job')
@@ -432,7 +451,7 @@ def list_jobs(request, timestamp=None):
 	if timestamp:
 		since = datetime.fromisoformat(timestamp)
 	else:
-		since = datetime.now() - timedelta(days=7)
+		since = datetime.now() - timedelta(days=365)
 	return send_json({
 		'timestamp': state.last_update.isoformat(),
 		'jobs': [
@@ -493,7 +512,12 @@ def show_stream(request, stream, job):
 		'stderr': 'StdErr'
 	}
 
-	return FileResponse(Tailer(job[mapping[stream]]))
+	path = job.get(mapping[stream], None)
+
+	if path is None or not os.path.exists(path):
+		return Response('File not found: {}'.format(path), 404)
+
+	return FileResponse(Tailer(path))
 
 
 def disk_quota():
