@@ -1208,7 +1208,7 @@
 			const accountUpdater = new Interval(async () => {
 				const balance = await fetchJSON('/balance/');
 				accountStatusBar.querySelectorAll('.remaining.core-hours').forEach(el => {
-					const account = balance.find(account => account.account.toLowerCase().endswith(el.dataset.type));
+					const account = balance.find(account => account.account.toLowerCase().endsWith(el.dataset.type));
 					el.textContent = account ? coreHoursFormat.format(account.balance) : '';
 				});
 			}, 30 * 60 * 1000);
