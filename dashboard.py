@@ -34,9 +34,9 @@ class Job(dict):
 		super().__init__(*args, **kwargs)
 		
 		if 'JobName' in self:
-			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean|)-([a-z]{2})-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean|)-([a-z]{2,3})-([a-z]+[a-z0-9\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], match[3]
-			elif match := re.match(r'^(reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered)-([a-z]{2})$', self['JobName']):
+			elif match := re.match(r'^(reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered)-([a-z]{2,3})$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], None
 			elif match := re.match(r'^(warc2text|pdf2warc)-([a-z]+[a-z0-9\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], None, match[2]
@@ -55,7 +55,7 @@ class Collection:
 			return frozenset()
 		return frozenset(entry.name
 			for entry in os.scandir(self.path + '-shards/')
-			if entry.is_dir() and re.match(r'^[a-z]{1,2}(\-[a-zA-Z]+)?$', entry.name))
+			if entry.is_dir() and re.match(r'^[a-z]{1,3}(\-[a-zA-Z]+)?$', entry.name))
 
 
 class Slurm:
@@ -564,7 +564,7 @@ def list_balance(request):
 		{
 			'account': account_name,
 			'balance': slurm_balance(account_name)
-		} for account_name in [read_config_var('SBATCH_ACCOUNT')]
+		} for account_name in os.getenv('SBATCH_ACCOUNT', read_config_var('SBATCH_ACCOUNT')).split(',')
 	])
 
 
