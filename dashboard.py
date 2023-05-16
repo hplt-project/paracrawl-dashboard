@@ -8,7 +8,15 @@ from itertools import chain
 from datetime import datetime, timedelta
 from pprint import pprint
 from web import Application, Response, FileResponse, main, send_file, send_json, URLConverter
-from typing import Any
+from typing import Any, TypeVar, Optional, Dict
+
+
+T = TypeVar('T')
+
+def none_throws(val: Optional[T]) -> T:
+	if val is None:
+		raise ValueError('val is None')
+	return val
 
 
 def match(pattern, obj):
@@ -68,7 +76,7 @@ class Slurm:
 
 	def current_jobs(self):
 		output = subprocess.check_output(['squeue',
-			'--user', os.getenv('USER'),
+			'--user', none_throws(os.getenv('USER')),
 			'--format', '%i|%K|%F|%C|%b|%j|%P|%r|%u|%y|%T|%M|%b|%N'])
 		lines = output.decode().splitlines()
 		mapping = {
@@ -97,7 +105,7 @@ class Slurm:
 	def accounting_jobs(self, additional_args=[]):
 		output = subprocess.check_output(['sacct',
 			'--parsable2',
-			'--user', os.getenv('USER'),
+			'--user', none_throws(os.getenv('USER')),
 			'--format', 'ALL',
 			*additional_args
 		])
@@ -310,6 +318,8 @@ slurm = Slurm()
 app = Application()
 
 class JobList:
+	jobs: Dict[str,datetime]
+
 	def __init__(self, jobs=[], timestamp=None):
 		self.jobs = {job['JobId']: (job, timestamp) for job in jobs}
 
@@ -427,7 +437,7 @@ def index(request):
 
 
 @app.route('/<str:filename>.html')
-def index(request, filename):
+def show_static_file(request, filename):
 	path = os.path.join(os.path.dirname(__file__), '{}.html'.format(filename))
 	if not os.path.exists(path):
 		return Response("File not found: {}".format(path), status_code=404)
@@ -494,13 +504,13 @@ class Tailer:
 		self.proc = subprocess.Popen(['tail', '-n', '+0', '-f', *paths], stdout=subprocess.PIPE)
 
 	def fileno(self):
-		return self.proc.stdout.fileno()
+		return none_throws(self.proc.stdout).fileno()
 
 	def read(self, *args, **kwargs):
-		return self.proc.stdout.read(*args, **kwargs)
+		return none_throws(self.proc.stdout).read(*args, **kwargs)
 
 	def close(self):
-		self.proc.stdout.close()
+		none_throws(self.proc.stdout).close()
 		self.proc.terminate() # closing otherwise tail won't notice
 		self.proc.wait() # wait to prevent zombie
 

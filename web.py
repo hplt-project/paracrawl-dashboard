@@ -6,7 +6,7 @@ import sys
 import mimetypes
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Set, Callable, Type, Any, Dict, Optional, Tuple, Pattern
+from typing import Protocol, Set, Callable, Type, Any, Dict, Optional, Tuple, Pattern
 from dataclasses import dataclass
 from pprint import pprint, pformat
 from collections import defaultdict
@@ -63,8 +63,19 @@ class Response:
 		handler.wfile.write(body)
 
 
+class FileLike(Protocol):
+	def read(self) -> bytes:
+		...
+
+	def fileno(self) -> int:
+		...
+
+	def close(self) -> None:
+		...
+
+
 class FileResponse(Response):
-	def __init__(self, fh: BufferedReader, status_code:int = 200, headers: Optional[Dict[str,Any]] = None):
+	def __init__(self, fh: FileLike, status_code:int = 200, headers: Optional[Dict[str,Any]] = None):
 		super().__init__('', status_code, headers)
 		self.fh = fh
 
