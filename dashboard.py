@@ -30,15 +30,23 @@ def match(pattern, obj):
 
 
 class Job(dict):
+	__slots__ = (
+		'step',
+		'language',
+		'collection'
+	)
+
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		
+		self.step, self.language, self.collection = None, None, None
+
 		if 'JobName' in self:
-			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean|)-([a-z]{2,3})-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+			if match := re.match(r'^(shard|merge-shard|clean-shard|dedupe|split|translate|tokenise|align|fix|score|clean|)-([a-z]{2,3})-([a-z]+[a-z0-9_\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], match[3]
 			elif match := re.match(r'^(reduce-tmx|reduce-tmx-deferred|reduce-classified|reduce-filtered)-([a-z]{2,3})$', self['JobName']):
 				self.step, self.language, self.collection = match[1], match[2], None
-			elif match := re.match(r'^(warc2text|pdf2warc)-([a-z]+[a-z0-9\-]*)$', self['JobName']):
+			elif match := re.match(r'^(warc2text|pdf2warc)-([a-z]+[a-z0-9_\-]*)$', self['JobName']):
 				self.step, self.language, self.collection = match[1], None, match[2]
 
 		if 'ArrayTaskId' in self and self['ArrayTaskId'] == 'N/A':
@@ -478,7 +486,7 @@ def list_jobs(request, timestamp=None):
 			}
 			for job, job_timestamp in state.jobs.with_timestamp()
 			if job_timestamp > since \
-			and hasattr(job, 'language') and hasattr(job, 'collection')
+			and job.language is not None and job.collection is not None
 		]
 	})
 
