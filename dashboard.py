@@ -102,11 +102,9 @@ class Slurm:
 
 			if job['ArrayTaskId'] == 'N/A':
 				yield Job({key: val for key, val in job.items() if key not in {'ArrayJobId', 'ArrayTaskId'}})
-			elif 'ArrayTaskId' in job and '-' in job['ArrayTaskId']:
+			elif 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A':
 				for task_id in self.parse_job_arrays(job['ArrayTaskId']):
 					yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], task_id), 'ArrayTaskId': task_id})
-			elif 'ArrayTaskId' in job and job['ArrayTaskId'] != 'N/A':
-				yield Job({**job, 'JobId': '{}_{}'.format(job['ArrayJobId'], job['ArrayTaskId'])})
 			else:
 				raise ValueError('Job interpretation error: {!r}'.format(job))
 
