@@ -4,6 +4,7 @@ import sys
 import os
 import subprocess
 import traceback
+import json
 from itertools import chain
 from datetime import datetime, timedelta
 from pprint import pprint
@@ -563,8 +564,31 @@ def disk_quota():
 			}
 
 
-def slurm_balance(account):
+def slurm_account_balance(account):
 	return int(subprocess.check_output(['sbank', 'balance', 'statement', '-u', '-a', account]))
+
+
+def slurm_balance():
+	return [
+		{
+			'account': account_name,
+			'balance': slurm_account_balance(account_name)
+		} for account_name in os.getenv('SBATCH_ACCOUNT', read_config_var('SBATCH_ACCOUNT')).split(',')
+	]
+
+
+def lumi_balance():
+	account = read_config_var('SBATCH_ACCOUNT')
+	with open(f'/var/lib/project_info/users/{account}/{account}.json') as fh:
+		billing = json.load(fh).get('billing', {})
+		return [
+			{
+				'account': f'{account}-{partition_name[:-len("_hours")]}',
+				'balance': partition['alloc'] - partition['used']
+			}
+			for partition_name, partition in billing.items()
+			if partition_name.endswith('_hours')
+		]
 
 
 @app.route('/quota/')
@@ -574,12 +598,10 @@ def list_quota(request):
 
 @app.route('/balance/')
 def list_balance(request):
-	return send_json([
-		{
-			'account': account_name,
-			'balance': slurm_balance(account_name)
-		} for account_name in os.getenv('SBATCH_ACCOUNT', read_config_var('SBATCH_ACCOUNT')).split(',')
-	])
+	try:
+		return send_json(lumi_balance())
+	except:
+		return send_json(slurm_balance())
 
 
 if __name__ == "__main__":        
