@@ -274,7 +274,7 @@
 
 			.log-meta dt, .log-meta dd {
 				display: inline-block;
-				background: #ccc;
+				background: rgba(128, 128, 128, 0.5);
 			}
 
 			.log-meta dt {
@@ -294,6 +294,17 @@
 			.stderr .log-meta dt:not(:first-child),
 			.stderr .log-meta dt:not(:first-child) + dd {
 				display: none; /* hide the started/finished/average counts on the stderr output */
+			}
+
+			.stdout .duration {
+				display: inline-block;
+				padding: 0 1ch;
+				margin: 0 1ch;
+				background: rgba(128, 128, 128, 0.5);
+			}
+
+			.stdout .duration::before {
+				content: 'Duration: ';
 			}
 
 			/* Highlight priority rows */
