@@ -272,6 +272,30 @@
 				padding: 0 0.25em;
 			}
 
+			.log-meta dt, .log-meta dd {
+				display: inline-block;
+				background: #ccc;
+			}
+
+			.log-meta dt {
+				padding: 0 0 0 1ch;
+			}
+
+			.log-meta dt::after {
+				content: ;
+				content: ': ';
+			}
+
+			.log-meta dd {
+				margin: 0 1ch 0 0;
+				padding: 0 1ch 0 0;
+			}
+
+			.stderr .log-meta dt:not(:first-child),
+			.stderr .log-meta dt:not(:first-child) + dd {
+				display: none; /* hide the started/finished/average counts on the stderr output */
+			}
+
 			/* Highlight priority rows */
 
 			tr.lang-cs > *,
@@ -710,24 +734,32 @@
 			}
 
 			function debounce(fn) {
-				let promise = null;
+				let scheduled = null;
 
 				return function debounced() {
-					if (!promise) {
-						promise = new Promise((accept, reject) => {
-							setTimeout(() => {
-								try {
-									accept(fn.apply(undefined, arguments));
-								} catch (e) {
-									reject(e);
-								} finally {
-									promise = null;
-								}
-							});
-						});
+				
+					// If we haven't scheduled the call yet, do so.
+					if (!scheduled) {
+						scheduled = {
+							promise: new Promise((accept, reject) => {
+								setTimeout(() => {
+									try {
+										accept(fn.apply(undefined, scheduled.args));
+									} catch (e) {
+										reject(e);
+									} finally {
+										scheduled = null;
+									}
+								});
+							}),
+							args: Array.from(arguments)
+						};
+					} else {
+						// Update the args for the call to the last call to the debounced function
+						scheduled.args = Array.from(arguments);
 					}
 
-					return promise
+					return scheduled.promise;
 				}
 			}
 
@@ -821,23 +853,76 @@
 
 				const markers = {};
 
+				const timings = {};
+
 				const data = stream(url);
+
+				const meta = {
+					batches: h('dd', {}, []),
+					started: h('dd', {}, []),
+					ended:   h('dd', {}, []),
+					average: h('dd', {}, []),
+				};
+
+				const renderMeta = debounce(() => {
+					// Number of markers (batches)
+					meta.batches.textContent = Object.keys(markers).length;
+
+					// Number of jobs with timings[marker].start
+					meta.started.textContent = Object.keys(timings).length;
+					
+					// Number of jobs with timings[marker].end
+					meta.ended.textContent = Object.values(timings).filter(({end}) => end !== undefined).length;
+					
+					// avg(timings[marker].end - timings[marker.start])
+					const avg = Object.values(timings).reduce(({sum, count}, {start, end}) => (start && end ? {sum: sum + (end - start), count: count + 1} : {sum, count}), {sum: 0, count: 0});
+					meta.average.textContent = avg.count > 0 ? formatDuration(avg.sum / avg.count) : '';
+				});
 				
 				async function render() {
 					try {
 						for await (let line of lines(data)) {
+							// Test if line is in the GNU parallel output format of "[args] message"
 							const match = line.match(/^(\[.+?\]|\d+)\t(.+?)$/);
 							if (match) {
-								if (!(match[1] in markers))
-									markers[match[1]] = Object.keys(markers).length;
-								const color = COLORS[markers[match[1]] % COLORS.length];
+								const [ , marker, message] = match;
+								let messageNodes = [message];
+
+								// If this is the first message for this set of args, assign a colour
+								if (!(marker in markers))
+									markers[marker] = Object.keys(markers).length;
+								const color = COLORS[markers[marker] % COLORS.length];
+
+								// If the message part is a typical start or finish message, safe that info
+								const timingMatch = message.match(/^(start|finish) (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/)
+								if (timingMatch) {
+									try {
+										const [, op, date, time] = timingMatch;
+										const dt = Date.parse(`${date}T${time}.000Z`) // Parses as ISO 8601 format;
+										switch (op) {
+											case 'start':
+												timings[marker] = {start:dt};
+												break;
+											case 'finish':
+												timings[marker].end = dt;
+												messageNodes.push(h('span', {className: 'duration'}, [formatDuration(timings[marker])]));
+												break;
+										}
+									} catch (e) {
+										console.log('Error while parsing', message, e);
+										// too bad but no harm done
+									}
+								}
+
 								root.appendChild(h('div', {className: 'line', dataset: {collapsible: true, collapsed: true}}, [
 									h('span', {'className': 'marker', style: {color}}, [match[1]]),
-									h('span', {'className': 'message'}, [match[2]])
+									h('span', {'className': 'message'}, messageNodes)
 								]));
 							} else {
 								root.appendChild(h('div', {className: 'line'}, [line]));
 							}
+
+							renderMeta();
 						}
 					} catch (e) {
 						if (e.name !== 'AbortError')
@@ -845,7 +930,20 @@
 					}
 				};
 
-				render(); // Just let it go!
+				root.appendChild(h('dl', {'className': 'log-meta'}, [
+					h('dt', {}, ['Batches']),
+					meta.batches,
+					h('dt', {}, ['Started']),
+					meta.started,
+					h('dt', {}, ['Finished']),
+					meta.ended,
+					h('dt', {}, ['Average']),
+					meta.average
+				]));
+
+				render(); // Just let it go! Async and not awaited here, so will go on for a while
+
+				renderMeta(); // Also render the meta info at least once
 
 				return data.abort; // Return the stop function
 			}
@@ -925,6 +1023,15 @@
 			function formatPercentage(cnt, sum) {
 				const frac = sum > 0 ? cnt / sum : 0;
 				return Math.floor((frac * 10000.0) / 100.0).toFixed(1) + '%';
+			}
+
+			function formatDuration(dt) {
+				if (typeof dt !== 'number')
+					dt = dt.end - dt.start;
+				const hours =   Math.floor((dt / 3600_000));
+				const minutes = Math.floor((dt /   60_000) % 60);
+				const seconds = Math.floor((dt /    1_000) % 60);
+				return `${hours.toFixed()}:${minutes.toFixed().padStart(2, '0')}:${seconds.toFixed().padStart(2, '0')}`;
 			}
 
 			function addJobSection(cell, job) {
