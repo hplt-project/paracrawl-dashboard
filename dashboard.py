@@ -68,6 +68,11 @@ class Collection:
 
 
 class Slurm:
+	accounts: Set[str]
+
+	def __init__(self, accounts:Iterable[str]):
+		self.accounts = set(accounts)
+
 	def scheduled_jobs(self, since=None):
 		if since is None:
 			since = datetime(1970, 1, 1)
@@ -326,9 +331,13 @@ def read_config_var(varname):
 		'-c', 'source config.sh; echo ${{{}}}'.format(varname)])
 	return output.decode().strip()
 
-slurm = Slurm()
 
-# collections = read_collections()
+def read_accounts():
+	"""Get Slurm account names from environment or cirrus-scripts config"""
+	return os.getenv('SBATCH_ACCOUNT', read_config_var('SBATCH_ACCOUNT')).split(',')
+
+
+slurm = Slurm(read_accounts())
 
 app = Application()
 
@@ -573,27 +582,54 @@ def slurm_balance():
 		{
 			'account': account_name,
 			'balance': slurm_account_balance(account_name)
-		} for account_name in os.getenv('SBATCH_ACCOUNT', read_config_var('SBATCH_ACCOUNT')).split(',')
+		} for account_name in slurm.accounts
 	]
 
 
 def lumi_balance():
-	account = read_config_var('SBATCH_ACCOUNT')
-	with open(f'/var/lib/project_info/users/{account}/{account}.json') as fh:
-		billing = json.load(fh).get('billing', {})
-		return [
-			{
-				'account': f'{account}-{partition_name[:-len("_hours")]}',
-				'balance': partition['alloc'] - partition['used']
-			}
-			for partition_name, partition in billing.items()
-			if partition_name.endswith('_hours')
-		]
+	out = []
+	for account in slurm.accounts:
+		with open(f'/var/lib/project_info/users/{account}/{account}.json') as fh:
+			billing = json.load(fh).get('billing', {})
+			out += [
+				{
+					'account': f'{account}-{partition_name[:-len("_hours")]}',
+					'balance': partition['alloc'] - partition['used']
+				}
+				for partition_name, partition in billing.items()
+				if partition_name.endswith('_hours')
+			]
+	return out
+
+
+def lumi_disk_quota():
+	columns = [
+		'size_usage', 'size_quota', 'size_limit', 'size_grace',
+		'file_usage', 'file_quota', 'file_limit', 'file_grace'
+	]
+	offsets = {
+	 	'users':    1000000000,
+		'projappl': 2000000000,
+		'scratch':  3000000000,
+		'flash':    3000000000,
+	}
+	partition = 'scratch'
+	for account in slurm.accounts:
+		gid = none_throws(subprocess.check_output(['getent', 'group', account])).split(b':')[2] # 3rd field
+		quota = subprocess.check_output(['lfs', 'quota', '-q', '-p', str(int(gid) + offsets[partition]), f'/{partition}/{account}']).split(b'\n')[1] # second line
+		fields = {
+			column: ((int(value) * 1024) / (1000 ** 3) if column.startswith('size_') else int(value)) if value != b'-' else None
+			for column, value in zip(columns, quota.split())
+		}
+		yield {'proj': account, **fields}
 
 
 @app.route('/quota/')
 def list_quota(request):
-	return send_json(list(disk_quota()))
+	try:
+		return send_json(list(lumi_disk_quota()))
+	except:
+		return send_json(list(disk_quota()))
 
 
 @app.route('/balance/')
@@ -604,5 +640,5 @@ def list_balance(request):
 		return send_json(slurm_balance())
 
 
-if __name__ == "__main__":        
+if __name__ == "__main__":
 	main(app)

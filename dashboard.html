@@ -354,6 +354,11 @@
 				content: ': ';
 			}
 
+			#status-bar .status-group .value + .value::before {
+				content: ' | ';
+				opacity: 0.6;
+			}
+
 			@keyframes placeHolderShimmer {
 				0% {
 					background-position: -500px 0
@@ -1334,13 +1339,13 @@
 			accountUpdater.startImmediate();
 			accountStatusBar.addEventListener('click', () => accountUpdater.startImmediate());
 
-			const diskStatusBar = h('div', {'id': 'disk-status', 'className': 'status-group'},
-				['rds-48gU72OtDNY'].map(proj => {
-					return h('div', {'className': 'status-widget', 'dataset': {proj}}, [
+			const diskStatusBarWidgetTemplate = h('span', {'className': 'value remaining size'}, ['0']);
+
+			const diskStatusBar = h('div', {'id': 'disk-status', 'className': 'status-group'}, [
+					h('div', {'className': 'status-widget'}, [
 						h('span', {'className': 'label'}, ['Disk space remaining']),
-						h('span', {'className': 'value remaining size'}, ['0'])
-					]);
-				}));
+					])
+				]);
 
 			document.body.appendChild(h('div', {'id': 'status-bar'}, [
 				jobStatusBar,
@@ -1352,10 +1357,10 @@
 
 			const diskUsageUpdater = new Interval(async () => {
 				const quota = await fetchJSON('/quota/');
-				diskStatusBar.querySelectorAll('.status-widget').forEach(el => {
-					const proj = el.dataset.proj;
-					const entry = quota.find(entry => entry['proj'] === proj);
-					el.querySelector('.remaining').textContent = formatFileSize(entry['size_quota'] - entry['size_usage'], 'GB');
+				quota.forEach(entry => {
+					const el = diskStatusBar.querySelector(`.value[dataset-proj=${entry['proj']}]`) || diskStatusBar.querySelector('.status-widget').appendChild(diskStatusBarWidgetTemplate.cloneNode(true));
+					el.title = `Disk quota for ${entry['proj']}: ${formatFileSize(entry['size_usage'], 'GB')}/${formatFileSize(entry['size_quota'], 'GB')}`;
+					el.textContent = formatFileSize(entry['size_quota'] - entry['size_usage'], 'GB');
 				});
 			}, 5 * 60 * 1000);
 
