@@ -3,13 +3,12 @@ import re
 import sys
 import os
 import subprocess
-import traceback
 import json
 from itertools import chain
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from pprint import pprint
 from web import Application, Response, FileResponse, main, send_file, send_json, URLConverter
-from typing import Any, Callable, FrozenSet, TypeVar, Optional, Dict, Tuple, List, Iterable, Iterator, Set
+from typing import Any, Callable, TypeVar, Optional, Dict, Tuple, List, Iterable, Iterator, Set, Union
 
 
 T = TypeVar('T')
@@ -88,10 +87,11 @@ class Slurm:
 			if timestamp.isnumeric() and timestamp >= since_timestamp:
 				yield from self.jobs_from_cli_args({'JobId': line_job_id, 'SubmitTime': timestamp, 'State': 'PENDING'}, arguments.split(' '))
 
-	def current_jobs(self):
+	def current_jobs(self, additional_args:List[str]=[]):
 		output = subprocess.check_output(['squeue',
 			'--account', ','.join(self.accounts),
-			'--format', '%i|%K|%F|%C|%b|%j|%P|%r|%u|%y|%T|%M|%b|%N'])
+			'--format', '%i|%K|%F|%C|%b|%j|%P|%r|%u|%y|%T|%M|%b|%N',
+			*additional_args])
 		lines = output.decode().splitlines()
 		mapping = {
 			'JOBID': 'JobId',
@@ -114,7 +114,7 @@ class Slurm:
 			else:
 				raise ValueError('Job interpretation error: {!r}'.format(job))
 
-	def accounting_jobs(self, additional_args=[]):
+	def accounting_jobs(self, additional_args:List[str]=[]):
 		output = subprocess.check_output(['sacct',
 			'--parsable2',
 			'--accounts', ','.join(self.accounts),
@@ -164,7 +164,7 @@ class Slurm:
 		if include_completed:
 			sources.append(self.accounting_jobs(['--jobs', ','.join(array_job_ids)]))
 
-		sources.append(self.current_jobs())
+		sources.append(self.current_jobs(['--jobs', ','.join(array_job_ids)]))
 
 		for job in chain(*sources):
 			try:
@@ -377,8 +377,8 @@ class JobList:
 	def filter(self, op:Callable[[Job],bool]) -> 'JobList':
 		return self.__class__(entry for entry in self.jobs.values() if op(entry[0]))
 
-	def get(self, job_id:str) -> Job:
-		return self.jobs[job_id][0]
+	def get(self, job_id:str, default:T=None) -> Union[Job,T]:
+		return self.jobs[job_id][0] if job_id in self.jobs else default
 
 	def job_ids(self) -> Iterable[str]:
 		return self.jobs.keys()
@@ -417,8 +417,8 @@ class State:
 		# Query latest status on these jobs
 		active_jobs.insert(add_jobs_to_set(seen_jobs, slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())])), now)
 
-		# Query active jobs
-		active_jobs.insert(add_jobs_to_set(seen_jobs, slurm.current_jobs()), now)
+		# Query active jobs, but still limit to only jobs that appeared in our scheduling log.
+		active_jobs.insert(add_jobs_to_set(seen_jobs, slurm.current_jobs(['--jobs', ','.join(active_jobs.job_ids())])), now)
 
 		# Remove dead jobs
 		active_jobs.insert([
@@ -434,7 +434,10 @@ class State:
 		return active_jobs
 
 	def get_job(self, job_id):
-		return self.jobs.get(job_id)
+		job = self.jobs.get(job_id, Job(JobId=job_id))
+		update = slurm.job(job_id)
+		if update: job.update(update)
+		return job
 
 
 state = State(since=datetime.now() - timedelta(days=365))
