@@ -355,8 +355,9 @@
 			}
 
 			#status-bar .status-group .value + .value::before {
-				content: ' | ';
+				content: '·';
 				opacity: 0.6;
+				margin: 0 0.5ch;
 			}
 
 			@keyframes placeHolderShimmer {
@@ -1358,7 +1359,12 @@
 			const diskUsageUpdater = new Interval(async () => {
 				const quota = await fetchJSON('/quota/');
 				quota.forEach(entry => {
-					const el = diskStatusBar.querySelector(`.value[dataset-proj=${entry['proj']}]`) || diskStatusBar.querySelector('.status-widget').appendChild(diskStatusBarWidgetTemplate.cloneNode(true));
+					let el = diskStatusBar.querySelector(`.value[data-proj=${entry['proj']}]`);
+					if (!el) {
+						el = diskStatusBarWidgetTemplate.cloneNode(true);
+						el.dataset.proj = entry['proj']
+						diskStatusBar.querySelector('.status-widget').appendChild(el);
+					}
 					el.title = `Disk quota for ${entry['proj']}: ${formatFileSize(entry['size_usage'], 'GB')}/${formatFileSize(entry['size_quota'], 'GB')}`;
 					el.textContent = formatFileSize(entry['size_quota'] - entry['size_usage'], 'GB');
 				});
