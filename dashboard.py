@@ -6,10 +6,10 @@ import subprocess
 import traceback
 import json
 from itertools import chain
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pprint import pprint
 from web import Application, Response, FileResponse, main, send_file, send_json, URLConverter
-from typing import Any, TypeVar, Optional, Dict
+from typing import Any, Callable, FrozenSet, TypeVar, Optional, Dict, Tuple, List, Iterable, Iterator, Set
 
 
 T = TypeVar('T')
@@ -90,7 +90,7 @@ class Slurm:
 
 	def current_jobs(self):
 		output = subprocess.check_output(['squeue',
-			'--user', none_throws(os.getenv('USER')),
+			'--account', ','.join(self.accounts),
 			'--format', '%i|%K|%F|%C|%b|%j|%P|%r|%u|%y|%T|%M|%b|%N'])
 		lines = output.decode().splitlines()
 		mapping = {
@@ -117,7 +117,7 @@ class Slurm:
 	def accounting_jobs(self, additional_args=[]):
 		output = subprocess.check_output(['sacct',
 			'--parsable2',
-			'--user', none_throws(os.getenv('USER')),
+			'--accounts', ','.join(self.accounts),
 			'--format', 'ALL',
 			*additional_args
 		])
@@ -342,44 +342,45 @@ slurm = Slurm(read_accounts())
 app = Application()
 
 class JobList:
-	jobs: Dict[str,datetime]
+	jobs: Dict[str,Tuple[Job,datetime]]
 
-	def __init__(self, jobs=[], timestamp=None):
-		self.jobs = {job['JobId']: (job, timestamp) for job in jobs}
+	def __init__(self, jobs:Iterable[Tuple[Job, datetime]] = []):
+		self.jobs = {job['JobId']: (job, timestamp) for job, timestamp in jobs}
 
-	def update(self, jobs, timestamp=None):
-		if isinstance(jobs, self.__class__) and timestamp is None:
-			jobs_iter = jobs.jobs.values()
-		else:
-			jobs_iter = ((job, timestamp) for job in jobs)
+	def insert(self, jobs:Iterable[Job], timestamp:datetime) -> None:
+		for job in jobs:
+			if job['JobId'] in self.jobs:
+				current = self.jobs[job['JobId']][0]
+				self.jobs[job['JobId']] = (Job({**current, **job}), timestamp)
+			else:
+				self.jobs[job['JobId']] = (job, timestamp)
 
-		for job, job_timestamp in jobs_iter:
+	def update(self, joblist:'JobList') -> None:
+		for job, update_timestamp in joblist.with_timestamp():
 			if job['JobId'] in self.jobs:
 				current, current_timestamp = self.jobs[job['JobId']]
-				if set(job.items()) - set(current.items()):
-					self.jobs[job['JobId']] = (type(current)({**current, **job}), current_timestamp if job_timestamp is None else job_timestamp)
+				# If the entry is newer, prioritise its values
+				if update_timestamp >= current_timestamp:
+					self.jobs[job['JobId']] = (type(current)({**current, **job}), update_timestamp)
+				# if it is older, but has more info, add the info but don't overwrite anything
+				elif set(job.items()) - set(current.items()):
+					self.jobs[job['JobId']] = (type(current)({**job, **current}), current_timestamp)
 			else:
-				self.jobs[job['JobId']] = (job, job_timestamp)
+				self.jobs[job['JobId']] = (job, update_timestamp)
 
-	def __iter__(self):
-		return iter(job for job, ts in self.jobs.values())
+	def __iter__(self) -> Iterator[Job]:
+		return iter(job for job, _ in self.jobs.values())
 
-	def with_timestamp(self):
+	def with_timestamp(self) -> Iterable[Tuple[Job,datetime]]:
 		return self.jobs.values()
 
-	def filter(self, op, timestamp=None):
-		job_list = self.__class__()
-		job_list.jobs = {
-			job_id: (job, job_timestamp if timestamp is None else timestamp)
-			for job_id, (job, job_timestamp) in self.jobs.items()
-			if op(job)
-		}
-		return job_list
+	def filter(self, op:Callable[[Job],bool]) -> 'JobList':
+		return self.__class__(entry for entry in self.jobs.values() if op(entry[0]))
 
-	def get(self, job_id):
+	def get(self, job_id:str) -> Job:
 		return self.jobs[job_id][0]
 
-	def job_ids(self):
+	def job_ids(self) -> Iterable[str]:
 		return self.jobs.keys()
 
 
@@ -399,9 +400,11 @@ class State:
 
 	def __init__(self, since):
 		self.last_update = datetime.now()
-		self.jobs = JobList(slurm.jobs(since=since, include_completed=True), timestamp=self.last_update)
+		self.jobs = JobList((job, self.last_update) for job in slurm.jobs(since=since, include_completed=True))
 
 	def update(self):
+		now = datetime.now()
+
 		# Active jobs (that we need updates on)
 		active_jobs = self.jobs.filter(lambda job: 'State' not in job or job['State'] not in self.STALE_STATES)
 
@@ -409,27 +412,24 @@ class State:
 		seen_jobs = set()
 
 		# Add any new scheduled jobs
-		active_jobs.update(add_jobs_to_set(seen_jobs, slurm.scheduled_jobs(since=self.last_update)))
+		active_jobs.insert(add_jobs_to_set(seen_jobs, slurm.scheduled_jobs(since=self.last_update)), now)
 
 		# Query latest status on these jobs
-		active_jobs.update(add_jobs_to_set(seen_jobs, slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())])))
+		active_jobs.insert(add_jobs_to_set(seen_jobs, slurm.accounting_jobs(['--jobs', ','.join(active_jobs.job_ids())])), now)
 
 		# Query active jobs
-		active_jobs.update(add_jobs_to_set(seen_jobs, slurm.current_jobs()))
+		active_jobs.insert(add_jobs_to_set(seen_jobs, slurm.current_jobs()), now)
 
 		# Remove dead jobs
-		active_jobs.update([
-			{'JobId': job['JobId'], 'State': 'CANCELLED'}
+		active_jobs.insert([
+			Job(JobId=job['JobId'], State='CANCELLED')
 			for job in active_jobs
 			if job['JobId'] not in seen_jobs
-		])
+		], now)
 
-		# Update history
-		last_update = datetime.now()
+		self.jobs.update(active_jobs)
 
-		self.jobs.update(active_jobs, timestamp=last_update)
-
-		self.last_update = last_update
+		self.last_update = now
 
 		return active_jobs
 
@@ -445,7 +445,7 @@ class JobConverter(URLConverter):
 	def to_pattern(self) -> str:
 		return r'\d+(?:_\d+)?'
 
-	def to_python(self, val: str) -> int:
+	def to_python(self, val: str) -> Job:
 		return state.get_job(val)
 
 	def to_str(self, val: Any) -> str:
