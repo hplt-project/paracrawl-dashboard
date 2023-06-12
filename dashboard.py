@@ -481,6 +481,7 @@ def list_collections(request):
 @app.route('/jobs/')
 @app.route('/jobs/delta/<str:timestamp>', name='list_jobs_delta')
 def list_jobs(request, timestamp=None):
+	collections = read_collections()
 	state.update()
 	if timestamp:
 		since = datetime.fromisoformat(timestamp)
@@ -502,7 +503,7 @@ def list_jobs(request, timestamp=None):
 			}
 			for job, job_timestamp in state.jobs.with_timestamp()
 			if job_timestamp > since \
-			and job.language is not None and job.collection is not None
+			and job.collection is None or job.collection in collections
 		]
 	})
 
