@@ -1575,6 +1575,9 @@
 				if (e.button != 0)
 					return;
 
+				// Prevent text selection
+				e.preventDefault();
+
 				let box = h('div', {'className': 'selection-box'});
 				let start = {
 					x: window.scrollX + e.clientX,
