@@ -315,12 +315,13 @@ def read_collections():
 		collection, path = line.split('\t', maxsplit=1)
 		collections[collection] = Collection(path)
 	# Allow us to use COLLECTIONS env variable to filter which collections we see
-	selection = frozenset(os.getenv('COLLECTIONS','').split(':'))
+	selection = os.getenv('COLLECTIONS')
 	if selection:
+		subset = frozenset(selection.split(':'))
 		collections = {
 			name: collection
 			for name, collection in collections.items()
-			if name in selection
+			if name in subset
 		}
 	return collections
 
