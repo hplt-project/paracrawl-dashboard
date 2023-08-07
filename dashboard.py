@@ -54,16 +54,21 @@ class Job(dict):
 
 
 class Collection:
-	def __init__(self, path):
+	def __init__(self, path, langs=None):
 		self.path = path
+		self.langs = langs
 
 	@property
 	def languages(self):
 		if not os.path.isdir(self.path + '-shards/'):
 			return frozenset()
-		return frozenset(entry.name
+		return frozenset(
+			entry.name
 			for entry in os.scandir(self.path + '-shards/')
-			if entry.is_dir() and re.match(r'^[a-z]{1,3}(?:\-[A-Z][a-z]+)?$', entry.name))
+			if entry.is_dir()
+			and re.match(r'^[a-z]{1,3}(?:\-[A-Z][a-z]+)?$', entry.name)
+			and (self.langs is None or entry.name in self.langs)
+		)
 
 
 class Slurm:
@@ -311,16 +316,21 @@ def read_collections():
 		'-c', 'source config.sh; for k in "${!COLLECTIONS[@]}"; do printf "%s\t%s\n" $k ${COLLECTIONS[$k]}; done'])
 	lines = output.decode().splitlines()
 	collections = {}
+
+	lang_selection = os.getenv("LANGS")
+	lang_subset = lang_selection.split(':') if lang_selection else None
+
 	for line in lines:
 		collection, path = line.split('\t', maxsplit=1)
-		collections[collection] = Collection(path)
+		collections[collection] = Collection(path, langs=lang_subset)
 	# Allow us to use COLLECTIONS env variable to filter which collections we see
-	selection = frozenset(os.getenv('COLLECTIONS','').split(':'))
+	selection = os.getenv('COLLECTIONS')
 	if selection:
+		subset = frozenset(selection.split(':'))
 		collections = {
 			name: collection
 			for name, collection in collections.items()
-			if name in selection
+			if name in subset
 		}
 	return collections
 
