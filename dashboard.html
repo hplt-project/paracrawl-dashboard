@@ -642,7 +642,7 @@
 						if (e.state in this.states)
 							this.setState(e.state);
 						else
-							this.dispatchInternal(document.location.pathname);
+							this.dispatchInternal(document.location.hash);
 					});
 				}
 
@@ -651,6 +651,13 @@
 				}
 
 				async dispatchInternal(url) {
+					// Convert hash based routing in path based routing.
+					if (url.startsWith('#'))
+						url = url.slice(1);
+
+					if (!url.startsWith('/'))
+						url = '/' + url;
+
 					const found = first(this.routes, route => {
 						const match = url.match(route.pattern);
 						if (match)
@@ -1138,7 +1145,7 @@
 
 				const list = cell.lists[id];
 				const link = list.appendChild(h('a',
-					{className: 'job', href: job.link},
+					{className: 'job', href: '#' + job.link},
 					[formatJob(job)]));
 
 				const render = () => {
@@ -1396,16 +1403,19 @@
 			});
 
 			router.add(/^\/jobs\/(?<job_id>\d+(_\d+)?)\/$/, (root, {url, job_id}) => {
+				// Make sure the job exists in some form so we have something to update
+				index.add({id: job_id, slurm: {}});
+
 				const job = index.find(job_id)
 
-				// Fetch more details about this job
+				// Fetch more details about this job in the background
 				fetch(url)
 					.then(response => response.json())
 					.then(job => index.add(job));
 
 				const slurmNodeLabel = h('small', {className: 'slurm-node'});
 
-				root.appendChild(h('h1', {}, [job.slurm['JobId'], slurmNodeLabel]));
+				root.appendChild(h('h1', {}, [job_id, slurmNodeLabel]));
 
 				function live(el, render) {
 					root.addEventListener('show', e => {
@@ -1423,17 +1433,17 @@
 
 				root.appendChild(h('section', {id: `${job_id}-stdout`, className: 'stdout'}, [
 					h('h2', {}, ['StdOut']),
-					live(h('pre'), el => streamToElement(job['stdout'], el))
+					live(h('pre'), el => streamToElement(`/jobs/${job_id}/stdout`, el))
 				]));
 
 				root.appendChild(h('section', {id: `${job_id}-stderr`, className: 'stderr'}, [
 					h('h2', {}, ['StdErr']),
-					live(h('pre'), el => streamToElement(job['stderr'], el))
+					live(h('pre'), el => streamToElement(`/jobs/${job_id}/stderr`, el))
 				]));
 
 				function render(el) {
 					function update({detail}) {
-						const updated = h('dl', {}, Object.entries(detail.slurm).map(([key, value]) => {
+						const updated = h('dl', {}, Object.entries(detail.slurm || {}).map(([key, value]) => {
 							return [
 								h('dt', {}, [key]),
 								h('dd', {}, [value])
@@ -1467,7 +1477,7 @@
 					return;
 
 				try {
-					router.dispatch(el.pathname);
+					router.dispatch(el.hash);
 					e.preventDefault();
 				} catch (err) {
 					console.error(err);
@@ -1652,7 +1662,7 @@
 
 			updater.startImmediate();
 
-			router.dispatch(document.location.pathname);
+			router.dispatch(document.location.hash);
 		</script>
 	</body>
 </html>
